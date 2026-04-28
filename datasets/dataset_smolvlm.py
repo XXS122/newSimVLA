@@ -281,14 +281,15 @@ class SmolVLMDataReaderWithPadding(SmolVLMDataReader):
 
 
 def create_smolvlm_dataloader(
-    batch_size: int, 
-    metas_path: str, 
+    batch_size: int,
+    metas_path: str,
     num_actions: int,
     training: bool,
     action_mode: str,
     num_workers: int = 4,
     image_size: int = 384,
     use_smart_padding: bool = False,
+    num_views: int = 3,
 ):
     """
     Create dataloader for SmolVLM-VLA training.
@@ -349,6 +350,7 @@ def create_smolvlm_dataloader(
         training=training,
         action_mode=action_mode,
         image_size=image_size,
+        num_views=num_views,
     )
     
     return DataLoader(

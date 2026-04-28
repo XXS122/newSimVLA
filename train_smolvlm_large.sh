@@ -8,6 +8,12 @@
 
 set -e
 
+# Auto-load paths.env if present and vars not already set
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "${SCRIPT_DIR}/paths.env" ] && [ -z "${SIMVLA_SMOLVLM_MODEL}" ]; then
+    source "${SCRIPT_DIR}/paths.env"
+fi
+
 # =============================================================================
 # Command line arguments (with defaults)
 # =============================================================================
@@ -32,12 +38,10 @@ export TF_CPP_MIN_LOG_LEVEL=2
 # =============================================================================
 # Path configuration
 # =============================================================================
+SMOLVLM_MODEL="${SIMVLA_SMOLVLM_MODEL:-HuggingFaceTB/SmolVLM-500M-Instruct}"
 LIBERO_DATA_DIR="./datasets/metas"
 NORM_STATS_PATH="./norm_stats/libero_norm.json"
 TRAIN_METAS_PATH="./datasets/metas/libero_train.json"
-
-# SmolVLM backbone (can be local path or HuggingFace repo)
-SMOLVLM_MODEL="HuggingFaceTB/SmolVLM-500M-Instruct"
 
 # =============================================================================
 # Training hyperparameters

@@ -1,0 +1,4 @@
+*.pyc
+*.log
+runs/
+paths.env
