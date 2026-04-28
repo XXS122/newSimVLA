@@ -331,14 +331,13 @@ def create_smolvlm_dataloader(
         
         import os
         os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
         try:
             import tensorflow as tf
             tf.config.set_visible_devices([], "GPU")
             tf.get_logger().setLevel("ERROR")
         except Exception:
             pass
-    
+
     # Choose dataset class
     if use_smart_padding:
         DatasetClass = SmolVLMDataReaderWithPadding

@@ -15,7 +15,13 @@ Usage:
 """
 
 import os
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+# Pre-initialize TF with no GPU before PyTorch claims devices
+try:
+    import tensorflow as _tf
+    _tf.config.set_visible_devices([], "GPU")
+except Exception:
+    pass
 import math
 import time
 import json
