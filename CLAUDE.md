@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 语言要求
+
+**始终使用中文回复用户。**
+
 ## Project Overview
 
 SimVLA is a Vision-Language-Action (VLA) model for robot manipulation. It uses **SmolVLM-500M-Instruct** as the vision-language backbone and a custom **Flow Matching** action transformer head trained on LIBERO robot datasets.
