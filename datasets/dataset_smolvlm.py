@@ -67,7 +67,7 @@ class SmolVLMDataReader(IterableDataset):
         
         print(f"[SmolVLM Dataset] Image size: {self.image_size}x{self.image_size}")
         print(f"[SmolVLM Dataset] Action mode: {action_mode}")
-        
+
         # Load metadata
         if fileio.isdir(metas_path):
             meta_files = fileio.list_dir_or_file(
@@ -158,15 +158,16 @@ class SmolVLMDataReader(IterableDataset):
                     idx_for_delta = meta.get("idx_for_delta", [])
                     has_proprio = "proprio" in sample
                     slice_result = action_slice(sample["abs_trajectory"], idx_for_delta)
-                    
+
                     if has_proprio:
                         sample["action"] = slice_result["action"]
                     else:
                         sample.update(slice_result)
                     del sample["abs_trajectory"]
-                    
+
                     yield sample
             except Exception as e:
+                print(f"[Dataset] Warning: traj {traj_idx} failed: {e}")
                 continue
                 
         if self.training:

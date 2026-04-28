@@ -55,7 +55,7 @@ WARMUP_STEPS=0
 FREEZE_STEPS=1000
 SAVE_INTERVAL=10000
 LOG_INTERVAL=20
-NUM_WORKERS=4
+NUM_WORKERS=0
 MAX_GRAD_NORM=1.0
 NUM_VIEWS=4
 # Model architecture (Small configuration)
@@ -149,7 +149,7 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 accelerate launch \
     --num_processes=${NUM_GPUS} \
     --main_process_port 29505 \
-    --mixed_precision bf16 \
+    --mixed_precision fp16 \
     train_smolvlm.py ${ARGS}
 
 echo "Training completed!"
