@@ -98,6 +98,16 @@ class DualStreamFusion(nn.Module):
         else:
             raise ValueError(f"Unknown fusion_type: {fusion_type}. Choose from add/concat_linear/cross_attn")
 
+    def _get_stream_indices(self, n_valid: int) -> tuple[list[int], list[int]]:
+        """根据有效视角数返回 (s_idx, d_idx)。"""
+        s_idx = [i for i in self.static_view_indices if i < n_valid]
+        d_idx = [i for i in self.dynamic_view_indices if i < n_valid]
+        if not s_idx:
+            s_idx = list(range(n_valid))
+        if not d_idx:
+            d_idx = s_idx[:1]
+        return s_idx, d_idx
+
     def forward(
         self,
         vlm_features: torch.Tensor,     # [B, T_enc, D]
@@ -120,13 +130,7 @@ class DualStreamFusion(nn.Module):
 
         for b in range(B):
             n_valid = int(num_valid_views[b].item())
-            s_idx = [i for i in self.static_view_indices if i < n_valid]
-            d_idx = [i for i in self.dynamic_view_indices if i < n_valid]
-
-            if not s_idx:
-                s_idx = list(range(n_valid))
-            if not d_idx:
-                d_idx = s_idx[:1]
+            s_idx, d_idx = self._get_stream_indices(n_valid)
 
             s_tokens = torch.cat([img_tokens[b, i*n:(i+1)*n] for i in s_idx], dim=0)
             d_tokens = torch.cat([img_tokens[b, i*n:(i+1)*n] for i in d_idx], dim=0)
@@ -143,10 +147,19 @@ class DualStreamFusion(nn.Module):
             dynamic_padded[b, :dynamic_parts[b].shape[0]] = dynamic_parts[b]
 
         if self.fusion_type == "add":
-            dynamic_gap = dynamic_padded.mean(dim=1, keepdim=True)
-            fused_static = static_padded + dynamic_gap
+            # 对每个样本单独计算有效 dynamic token 均值，避免 padding 稀释
+            dynamic_means = torch.zeros(B, 1, D, device=vlm_features.device, dtype=vlm_features.dtype)
+            for b in range(B):
+                n_d = dynamic_parts[b].shape[0]
+                dynamic_means[b, 0] = dynamic_padded[b, :n_d].mean(dim=0)
+            fused_static = static_padded + dynamic_means
         elif self.fusion_type == "concat_linear":
-            dynamic_gap = dynamic_padded.mean(dim=1, keepdim=True).expand_as(static_padded)
+            # 对每个样本单独计算有效 dynamic token 均值，避免 padding 稀释
+            dynamic_means = torch.zeros(B, 1, D, device=vlm_features.device, dtype=vlm_features.dtype)
+            for b in range(B):
+                n_d = dynamic_parts[b].shape[0]
+                dynamic_means[b, 0] = dynamic_padded[b, :n_d].mean(dim=0)
+            dynamic_gap = dynamic_means.expand_as(static_padded)
             fused_static = self.norm(self.fusion_linear(
                 torch.cat([static_padded, dynamic_gap], dim=-1)
             ))
@@ -156,9 +169,7 @@ class DualStreamFusion(nn.Module):
         fused_img_tokens = img_tokens.clone()
         for b in range(B):
             n_valid = int(num_valid_views[b].item())
-            s_idx = [i for i in self.static_view_indices if i < n_valid]
-            if not s_idx:
-                s_idx = list(range(n_valid))
+            s_idx, _ = self._get_stream_indices(n_valid)
             for j, i in enumerate(s_idx):
                 fused_img_tokens[b, i*n:(i+1)*n] = fused_static[b, j*n:(j+1)*n]
 
