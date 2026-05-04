@@ -104,6 +104,28 @@ class SmolVLMVLA(PreTrainedModel):
         else:
             logging.info("✓ Concat mode enabled: conditions concatenated to sequence")
 
+        # Dual-stream fusion（可选）
+        self.dual_stream_fusion = None
+        if config.use_dual_stream:
+            from .dual_stream import DualStreamFusion
+            # 获取 VLM connector 输出维度
+            vlm_hidden = 576  # SmolVLM-500M 默认
+            if hasattr(self.vlm.model, 'connector'):
+                try:
+                    vlm_hidden = self.vlm.model.connector.proj.out_features
+                except AttributeError:
+                    pass
+            elif hasattr(self.vlm.model, 'multi_modal_projector'):
+                try:
+                    vlm_hidden = self.vlm.model.multi_modal_projector.proj.out_features
+                except AttributeError:
+                    pass
+            self.dual_stream_fusion = DualStreamFusion(
+                hidden_size=vlm_hidden,
+                fusion_type=config.dual_stream_fusion,
+            )
+            logging.info(f"[SmolVLMVLA] Dual-stream fusion enabled: {config.dual_stream_fusion}")
+
         # Deferred FastAPI app
         self.app: FastAPI | None = None
 
@@ -343,6 +365,13 @@ class SmolVLMVLA(PreTrainedModel):
         """
         enc = self.forward_vlm_efficient(image_input, image_mask, input_ids)
 
+        # 双流融合（可选）
+        if self.dual_stream_fusion is not None:
+            enc["vlm_features"] = self.dual_stream_fusion(
+                enc["vlm_features"],
+                enc["num_valid_views"],
+            )
+
         B = input_ids.shape[0]
         device = input_ids.device
         
@@ -408,6 +437,13 @@ class SmolVLMVLA(PreTrainedModel):
         """
         self.eval()
         enc = self.forward_vlm_efficient(image_input, image_mask, input_ids)
+
+        # 双流融合（可选）
+        if self.dual_stream_fusion is not None:
+            enc["vlm_features"] = self.dual_stream_fusion(
+                enc["vlm_features"],
+                enc["num_valid_views"],
+            )
 
         B = input_ids.shape[0]
         D = self.action_space.dim_action
