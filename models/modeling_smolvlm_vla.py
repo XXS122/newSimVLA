@@ -317,8 +317,12 @@ class SmolVLMVLA(PreTrainedModel):
         # Use the last hidden state as VLM features
         # This now contains fused vision-language representations
         vlm_features = lm_outputs.last_hidden_state  # [B, max_seq_len, D]
-        
-        return {"vlm_features": vlm_features}
+
+        return {
+            "vlm_features": vlm_features,
+            "num_valid_views": valid_per_sample,
+            "num_patches_per_view": num_patches,
+        }
 
     # ================================= training =================================
     def forward(
