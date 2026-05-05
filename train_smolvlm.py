@@ -157,6 +157,11 @@ def get_args_parser():
                         help="Number of attention heads")
     parser.add_argument("--num_views", type=int, default=3,
                         help="Number of camera views (3 for LIBERO, 4 for VLABench)")
+    parser.add_argument("--use_dual_stream", action="store_true", default=False,
+                        help="启用双流多视角融合")
+    parser.add_argument("--dual_stream_fusion", type=str, default="cross_attn",
+                        choices=["add", "concat_linear", "cross_attn"],
+                        help="双流融合方式")
 
     return parser
 
@@ -345,6 +350,8 @@ def main(args):
             num_actions=args.num_actions,
             use_adaln=args.use_adaln,
             image_size=args.image_size,
+            use_dual_stream=args.use_dual_stream,
+            dual_stream_fusion=args.dual_stream_fusion,
         )
         model = SmolVLMVLA(config)
         

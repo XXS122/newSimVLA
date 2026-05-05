@@ -63,6 +63,8 @@ HIDDEN_SIZE=768
 DEPTH=12
 NUM_HEADS=12
 USE_ADALN=false
+USE_DUAL_STREAM=true          # 启用双流融合
+DUAL_STREAM_FUSION=cross_attn # add | concat_linear | cross_attn
 
 # =============================================================================
 # Step 1: Create debug metadata (50 shards)
@@ -113,6 +115,10 @@ ARGS="--output_dir ${OUTPUT_DIR} \
 
 if [ "${USE_ADALN}" = true ]; then
     ARGS="${ARGS} --use_adaln"
+fi
+
+if [ "${USE_DUAL_STREAM}" = true ]; then
+    ARGS="${ARGS} --use_dual_stream --dual_stream_fusion ${DUAL_STREAM_FUSION}"
 fi
 
 if [ -n "${RESUME_CKPT}" ]; then

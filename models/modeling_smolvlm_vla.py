@@ -104,6 +104,18 @@ class SmolVLMVLA(PreTrainedModel):
         else:
             logging.info("✓ Concat mode enabled: conditions concatenated to sequence")
 
+        # Dual-stream fusion（可选）
+        self.dual_stream_fusion = None
+        if config.use_dual_stream:
+            from .dual_stream import DualStreamFusion
+            # VLM features 是 text_model 的输出，维度等于 text_config.hidden_size
+            vlm_hidden = self.vlm.config.text_config.hidden_size
+            self.dual_stream_fusion = DualStreamFusion(
+                hidden_size=vlm_hidden,
+                fusion_type=config.dual_stream_fusion,
+            )
+            logging.info(f"[SmolVLMVLA] Dual-stream fusion enabled: {config.dual_stream_fusion}, hidden_size={vlm_hidden}")
+
         # Deferred FastAPI app
         self.app: FastAPI | None = None
 
@@ -317,8 +329,12 @@ class SmolVLMVLA(PreTrainedModel):
         # Use the last hidden state as VLM features
         # This now contains fused vision-language representations
         vlm_features = lm_outputs.last_hidden_state  # [B, max_seq_len, D]
-        
-        return {"vlm_features": vlm_features}
+
+        return {
+            "vlm_features": vlm_features,
+            "num_valid_views": valid_per_sample,
+            "num_patches_per_view": num_patches,
+        }
 
     # ================================= training =================================
     def forward(
@@ -339,9 +355,17 @@ class SmolVLMVLA(PreTrainedModel):
         """
         enc = self.forward_vlm_efficient(image_input, image_mask, input_ids)
 
+        # 双流融合（可选）
+        if self.dual_stream_fusion is not None:
+            enc["vlm_features"] = self.dual_stream_fusion(
+                enc["vlm_features"],
+                enc["num_valid_views"],
+                num_patches_per_view=enc.get("num_patches_per_view"),
+            )
+
         B = input_ids.shape[0]
         device = input_ids.device
-        
+
         # Beta(1.5, 1) time sampling
         beta_dist = torch.distributions.Beta(
             torch.tensor(1.5, device=device), 
@@ -404,6 +428,14 @@ class SmolVLMVLA(PreTrainedModel):
         """
         self.eval()
         enc = self.forward_vlm_efficient(image_input, image_mask, input_ids)
+
+        # 双流融合（可选）
+        if self.dual_stream_fusion is not None:
+            enc["vlm_features"] = self.dual_stream_fusion(
+                enc["vlm_features"],
+                enc["num_valid_views"],
+                num_patches_per_view=enc.get("num_patches_per_view"),
+            )
 
         B = input_ids.shape[0]
         D = self.action_space.dim_action

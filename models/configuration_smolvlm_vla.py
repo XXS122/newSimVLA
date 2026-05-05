@@ -46,7 +46,11 @@ class SmolVLMVLAConfig(PretrainedConfig):
         
         # === DiT/AdaLN Mode ===
         use_adaln: bool = False,
-        
+
+        # === Dual-Stream Multi-View Fusion ===
+        use_dual_stream: bool = False,
+        dual_stream_fusion: str = "cross_attn",  # "add" | "concat_linear" | "cross_attn"
+
         # === Image settings ===
         image_size: int = 384,  # Can be 384 or 512
         num_views: int = 3,  # Number of camera views
@@ -71,7 +75,11 @@ class SmolVLMVLAConfig(PretrainedConfig):
         
         # DiT/AdaLN settings
         self.use_adaln = use_adaln
-        
+
+        # Dual-Stream Multi-View Fusion settings
+        self.use_dual_stream = use_dual_stream
+        self.dual_stream_fusion = dual_stream_fusion
+
         # Image settings
         self.image_size = image_size
         self.num_views = num_views
