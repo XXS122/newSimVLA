@@ -15,6 +15,8 @@ Usage:
 """
 
 import os
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 import math
 import time
 import json
@@ -153,6 +155,8 @@ def get_args_parser():
                         help="Number of transformer layers")
     parser.add_argument("--num_heads", type=int, default=12,
                         help="Number of attention heads")
+    parser.add_argument("--num_views", type=int, default=3,
+                        help="Number of camera views (3 for LIBERO, 4 for VLABench)")
 
     return parser
 
@@ -359,6 +363,7 @@ def main(args):
         training=True,
         num_workers=args.num_workers,
         image_size=args.image_size,
+        num_views=args.num_views,
     )
 
     # Optimizer

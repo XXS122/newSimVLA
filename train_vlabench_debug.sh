@@ -1,10 +1,9 @@
 #!/bin/bash
-# SimVLA Training Script for LIBERO (Small Model)
-# 
-# Key features:
-#   - 384x384 image resolution (SmolVLM requirement)
-#   - All views processed together by VLM (no aux_visual_inputs)
-#   - Smaller action transformer configuration
+# SimVLA Debug Training Script for VLABench
+#
+# 用于快速调试：只用前 50 个 shard，训练 10000 步（约 1-2 小时）
+# 参数与全量训练保持一致（image_size=384, num_views=4, fp16）
+# 用法：CUDA_VISIBLE_DEVICES=2,3 bash train_vlabench_debug.sh
 
 set -e
 
@@ -18,19 +17,20 @@ fi
 # Command line arguments (with defaults)
 # =============================================================================
 
-BATCH_SIZE=${1:-64}
+BATCH_SIZE=${1:-16}
 LEARNING_COEF=${2:-0.1}
-OUTPUT_DIR=${3:-./runs/simvla_libero_small}
+OUTPUT_DIR=${3:-./runs/simvla_vlabench_debug}
 RESUME_CKPT=${4:-""}
 
-echo "Training parameters:"
+echo "Debug training parameters:"
 echo "   batch_size: $BATCH_SIZE"
 echo "   learning_coef: $LEARNING_COEF"
 echo "   output_dir: $OUTPUT_DIR"
 echo "   resume_ckpt: ${RESUME_CKPT:-'None (training from scratch)'}"
 
 # GPU configuration
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES="${SIMVLA_CUDA_DEVICES:-0,1,2,3}"
+NUM_GPUS="${SIMVLA_NUM_GPUS:-4}"
 
 # Suppress TensorFlow logs
 export TF_CPP_MIN_LOG_LEVEL=2
@@ -39,49 +39,51 @@ export TF_CPP_MIN_LOG_LEVEL=2
 # Path configuration
 # =============================================================================
 SMOLVLM_MODEL="${SIMVLA_SMOLVLM_MODEL:-HuggingFaceTB/SmolVLM-500M-Instruct}"
-LIBERO_DATA_DIR="./datasets/metas"
-NORM_STATS_PATH="./norm_stats/libero_norm.json"
-TRAIN_METAS_PATH="./datasets/metas/libero_train.json"
+VLABENCH_DATA_DIR="${SIMVLA_VLABENCH_DATA:-./datasets/vlabench/data/1.0.0}"
+NORM_STATS_PATH="./norm_stats/vlabench_norm.json"
+TRAIN_METAS_PATH="./datasets/metas/vlabench_debug_train.json"
+DEBUG_MAX_FILES=50
 
 # =============================================================================
-# Training hyperparameters
+# Debug-specific hyperparameters
 # =============================================================================
 LEARNING_RATE=1e-4
-NUM_ACTIONS=10          # Action horizon
-ITERS=200000
+NUM_ACTIONS=10
+ITERS=10000
 WARMUP_STEPS=0
-FREEZE_STEPS=1000
-SAVE_INTERVAL=10000
-LOG_INTERVAL=20
-NUM_WORKERS=4
+FREEZE_STEPS=500
+SAVE_INTERVAL=2000
+LOG_INTERVAL=10
+NUM_WORKERS=0
 MAX_GRAD_NORM=1.0
+NUM_VIEWS=4
 
-# Model architecture (Small configuration)
-HIDDEN_SIZE=768         
-DEPTH=12                 
-NUM_HEADS=12             
-USE_ADALN=false          # DiT-style conditioning
+# Model architecture (same as full training)
+HIDDEN_SIZE=768
+DEPTH=12
+NUM_HEADS=12
+USE_ADALN=false
 
 # =============================================================================
-# Step 1: Create training metadata (if not exists)
+# Step 1: Create debug metadata (50 shards)
 # =============================================================================
 if [ ! -f "$TRAIN_METAS_PATH" ]; then
-    echo "Creating training metadata..."
-    python create_libero_meta.py \
-        --data_dir $LIBERO_DATA_DIR \
-        --subsets libero_10 libero_goal libero_object libero_spatial libero_90 \
-        --output $TRAIN_METAS_PATH
+    echo "Creating debug metadata (${DEBUG_MAX_FILES} shards)..."
+    python create_vlabench_meta.py \
+        --data_dir "$VLABENCH_DATA_DIR" \
+        --max_files "$DEBUG_MAX_FILES" \
+        --output "$TRAIN_METAS_PATH"
 fi
 
 # =============================================================================
-# Step 2: Compute normalization statistics (if not exists)
+# Step 2: Compute normalization statistics (reuse full stats if exists)
 # =============================================================================
 if [ ! -f "$NORM_STATS_PATH" ]; then
-    echo "Computing normalization statistics..."
-    python compute_libero_norm_stats.py \
-        --data_dir $LIBERO_DATA_DIR \
-        --subsets libero_10 libero_goal libero_object libero_spatial libero_90 \
-        --output $NORM_STATS_PATH
+    echo "Computing normalization statistics (using ${DEBUG_MAX_FILES} shards for speed)..."
+    python compute_vlabench_norm_stats.py \
+        --data_dir "$VLABENCH_DATA_DIR" \
+        --max_files "$DEBUG_MAX_FILES" \
+        --output "$NORM_STATS_PATH"
 fi
 
 # =============================================================================
@@ -90,7 +92,8 @@ fi
 ARGS="--output_dir ${OUTPUT_DIR} \
     --train_metas_path ${TRAIN_METAS_PATH} \
     --smolvlm_model_path ${SMOLVLM_MODEL} \
-    --action_mode libero_joint \
+    --action_mode vlabench_joint \
+    --num_views ${NUM_VIEWS} \
     --batch_size ${BATCH_SIZE} \
     --learning_rate ${LEARNING_RATE} \
     --learning_coef ${LEARNING_COEF} \
@@ -108,31 +111,30 @@ ARGS="--output_dir ${OUTPUT_DIR} \
     --norm_stats_path ${NORM_STATS_PATH} \
     --max_grad_norm ${MAX_GRAD_NORM}"
 
-# Add AdaLN flag if enabled
 if [ "${USE_ADALN}" = true ]; then
     ARGS="${ARGS} --use_adaln"
 fi
 
-# Add resume checkpoint if specified
 if [ -n "${RESUME_CKPT}" ]; then
     ARGS="${ARGS} --models ${RESUME_CKPT} --resume"
     echo "Resuming from ${RESUME_CKPT}"
 fi
 
 # =============================================================================
-# Step 4: Start training
+# Step 4: Start debug training
 # =============================================================================
 echo "============================================================"
-echo "Starting SimVLA Training on LIBERO (Small Action Transformer)"
+echo "Starting SimVLA DEBUG Training on VLABench"
 echo "============================================================"
 echo "SmolVLM backbone: ${SMOLVLM_MODEL}"
-echo "Data directory: $LIBERO_DATA_DIR"
-echo "Normalization stats: $NORM_STATS_PATH"
-echo "Action mode: libero_joint"
-echo "Batch size: ${BATCH_SIZE}"
-echo "Learning rate: ${LEARNING_RATE}"
-echo "Learning coef: ${LEARNING_COEF}"
-echo "Num actions: ${NUM_ACTIONS}"
+echo "VLABench data dir: ${VLABENCH_DATA_DIR}"
+echo "Debug shards: ${DEBUG_MAX_FILES} / 512"
+echo "Normalization stats: ${NORM_STATS_PATH}"
+echo "Action mode: vlabench_joint"
+echo "Num views: 4"
+echo "Batch size: ${BATCH_SIZE} (debug)"
+echo "Iters: ${ITERS} (debug, full=200000)"
+echo "Save interval: ${SAVE_INTERVAL}"
 echo "Image size: 384x384"
 echo "============================================================"
 echo "Action Transformer configuration:"
@@ -141,15 +143,15 @@ echo "   Depth: ${DEPTH}"
 echo "   Num heads: ${NUM_HEADS}"
 echo "   Use AdaLN: ${USE_ADALN}"
 echo "============================================================"
+echo "GPU config: CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}, num_processes=${NUM_GPUS}"
 echo "Output directory: ${OUTPUT_DIR}"
 echo "============================================================"
 
-# Multi-GPU training
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 accelerate launch \
-    --num_processes=4 \
-    --main_process_port 29504 \
-    --mixed_precision bf16 \
+    --num_processes=${NUM_GPUS} \
+    --main_process_port 29506 \
+    --mixed_precision fp16 \
     train_smolvlm.py ${ARGS}
 
-echo "Training completed!"
+echo "Debug training completed! Checkpoints saved to ${OUTPUT_DIR}"

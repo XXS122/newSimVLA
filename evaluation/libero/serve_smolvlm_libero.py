@@ -18,6 +18,9 @@ import logging
 import os
 import sys
 import traceback
+
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_DATASETS_OFFLINE"] = "1"
 from pathlib import Path
 from typing import Any, Dict, Optional
 
