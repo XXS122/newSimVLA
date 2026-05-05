@@ -271,6 +271,85 @@ class LiberoJointActionSpace(BaseActionSpace):
         return self.unnormalize_action(action)
 
 
+
+# =============================================================================
+# VLABench Action Space
+# =============================================================================
+@register_action("vlabench_joint")
+class VLABenchJointActionSpace(BaseActionSpace):
+    """
+    VLABench joint action space.
+
+    Data layout:
+      - state (proprio): 7-dim [xyz(3), euler(3), gripper(1)]
+      - actions: 7-dim [xyz(3), euler(3), gripper(1)]
+    """
+
+    dim_action = 7
+    dim_proprio = 7
+    gripper_idx = (6,)
+
+    def __init__(
+        self,
+        norm_stats_path: Optional[str] = None,
+        use_quantile_norm: bool = False,
+    ):
+        super().__init__()
+        self.use_quantile_norm = use_quantile_norm
+        self.state_norm_stats: Optional[NormStats] = None
+        self.action_norm_stats: Optional[NormStats] = None
+
+        if norm_stats_path:
+            self._load(norm_stats_path)
+
+    def _load(self, path: str):
+        stats_dict = load_norm_stats(path)
+        if "state" in stats_dict:
+            self.state_norm_stats = stats_dict["state"]
+        if "actions" in stats_dict:
+            self.action_norm_stats = stats_dict["actions"]
+
+    def to(self, device):
+        if self.state_norm_stats is not None:
+            self.state_norm_stats.to(device)
+        if self.action_norm_stats is not None:
+            self.action_norm_stats.to(device)
+        return super().to(device)
+
+    def _norm(self, x: torch.Tensor, stats: NormStats) -> torch.Tensor:
+        if stats.mean.device != x.device:
+            stats.to(x.device)
+        D = x.shape[-1]
+        if self.use_quantile_norm and stats.q01 is not None and stats.q99 is not None:
+            q01, q99 = stats.q01[..., :D], stats.q99[..., :D]
+            return (x - q01) / (q99 - q01 + 1e-6) * 2.0 - 1.0
+        return (x - stats.mean[..., :D]) / (stats.std[..., :D] + 1e-6)
+
+    def _unnorm(self, x: torch.Tensor, stats: NormStats) -> torch.Tensor:
+        if stats.mean.device != x.device:
+            stats.to(x.device)
+        D = x.shape[-1]
+        if self.use_quantile_norm and stats.q01 is not None and stats.q99 is not None:
+            q01, q99 = stats.q01[..., :D], stats.q99[..., :D]
+            return (x + 1.0) / 2.0 * (q99 - q01 + 1e-6) + q01
+        return x * (stats.std[..., :D] + 1e-6) + stats.mean[..., :D]
+
+    def compute_loss(self, pred, target):
+        return {"velocity_loss": torch.mean(torch.square(pred - target))}
+
+    def preprocess(self, proprio, action, mode="train"):
+        if self.state_norm_stats is not None:
+            proprio = self._norm(proprio, self.state_norm_stats)
+        if self.action_norm_stats is not None:
+            action = self._norm(action, self.action_norm_stats)
+        return proprio, action
+
+    def postprocess(self, action: torch.Tensor) -> torch.Tensor:
+        if self.action_norm_stats is not None:
+            return self._unnorm(action, self.action_norm_stats)
+        return action
+
+
 # =============================================================================
 # Exports
 # =============================================================================
@@ -279,6 +358,7 @@ __all__ = [
     "build_action_space",
     "register_action",
     "LiberoJointActionSpace",
+    "VLABenchJointActionSpace",
     "ACTION_REGISTRY",
     "NormStats",
     "load_norm_stats",

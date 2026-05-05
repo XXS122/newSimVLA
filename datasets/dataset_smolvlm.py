@@ -67,7 +67,7 @@ class SmolVLMDataReader(IterableDataset):
         
         print(f"[SmolVLM Dataset] Image size: {self.image_size}x{self.image_size}")
         print(f"[SmolVLM Dataset] Action mode: {action_mode}")
-        
+
         # Load metadata
         if fileio.isdir(metas_path):
             meta_files = fileio.list_dir_or_file(
@@ -158,15 +158,16 @@ class SmolVLMDataReader(IterableDataset):
                     idx_for_delta = meta.get("idx_for_delta", [])
                     has_proprio = "proprio" in sample
                     slice_result = action_slice(sample["abs_trajectory"], idx_for_delta)
-                    
+
                     if has_proprio:
                         sample["action"] = slice_result["action"]
                     else:
                         sample.update(slice_result)
                     del sample["abs_trajectory"]
-                    
+
                     yield sample
             except Exception as e:
+                print(f"[Dataset] Warning: traj {traj_idx} failed: {e}")
                 continue
                 
         if self.training:
@@ -281,14 +282,15 @@ class SmolVLMDataReaderWithPadding(SmolVLMDataReader):
 
 
 def create_smolvlm_dataloader(
-    batch_size: int, 
-    metas_path: str, 
+    batch_size: int,
+    metas_path: str,
     num_actions: int,
     training: bool,
     action_mode: str,
     num_workers: int = 4,
     image_size: int = 384,
     use_smart_padding: bool = False,
+    num_views: int = 3,
 ):
     """
     Create dataloader for SmolVLM-VLA training.
@@ -329,14 +331,13 @@ def create_smolvlm_dataloader(
         
         import os
         os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
         try:
             import tensorflow as tf
             tf.config.set_visible_devices([], "GPU")
             tf.get_logger().setLevel("ERROR")
         except Exception:
             pass
-    
+
     # Choose dataset class
     if use_smart_padding:
         DatasetClass = SmolVLMDataReaderWithPadding
@@ -349,6 +350,7 @@ def create_smolvlm_dataloader(
         training=training,
         action_mode=action_mode,
         image_size=image_size,
+        num_views=num_views,
     )
     
     return DataLoader(
