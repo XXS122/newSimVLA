@@ -123,6 +123,25 @@ bash run_eval_all.sh 8102 50 "eval_run_name" "0 1 2 3"  # num_trials=50
 
 `libero` 环境需单独创建：`conda create -n libero python=3.8.13`，并安装 LIBERO 模拟器包。
 
+**启动 VLABench 策略服务器**（在 `simvla` 环境中）：
+```bash
+cd evaluation/vlabench
+CUDA_VISIBLE_DEVICES=0 python serve_smolvlm_vlabench.py \
+    --checkpoint ../../runs/simvla_vlabench_small/ckpt-100000 \
+    --norm_stats ../../norm_stats/vlabench_norm.json \
+    --port 8103
+bash run_eval_vlabench.sh 8103 10 "eval_run_name"
+```
+
+**离线动作 MSE 评估（无需模拟器）：**
+```bash
+python eval_action_mse.py \
+    --checkpoint ./runs/simvla_vlabench_small/ckpt-10000 \
+    --norm_stats ./norm_stats/vlabench_norm.json \
+    --data_dir ./datasets/vlabench/data/1.0.0 \
+    --num_shards 10 --num_samples 200
+```
+
 ## 架构
 
 ### 前向传播流程
@@ -171,6 +190,10 @@ SmolVLM 视觉编码器        SmolVLM 分词器
 
 - **`datasets/domain_handler/vlabench_rlds.py`**：`VLABenchRLDSHandler`——读取 VLABench RLDS/TFRecord 格式。4 个视角：front、wrist、image_0、image_1。无图像旋转，无欧拉角→轴角转换
 
+- **`models/dual_stream.py`**：`DualStreamFusion` 实验性多视角融合模块，将 VLM 特征按摄像头视角拆分为静态流（场景）与动态流（腕部）。融合策略由 `SmolVLMVLAConfig.dual_stream_fusion` 控制：`add`（直接相加）、`concat_linear`（拼接后线性投影）、`cross_attn`（交叉注意力）；通过 `use_dual_stream=True` 启用
+
+- **`datasets/domain_handler/registry.py`**：Domain Handler 注册机制。用 `@register_handler("name")` 装饰 `DomainHandler` 子类即可添加新数据域；`SmolVLMDataReader` 通过元数据 JSON 中的 `domain` 字段自动查找对应 handler
+
 - **`datasets/domain_config.py`**：`DATA_WEIGHTS` 字典控制多数据集混合时的采样权重
 
 ### 训练细节
@@ -195,3 +218,11 @@ HDF5 结构：`data/demo_X/{actions, obs/agentview_rgb, obs/eye_in_hand_rgb, obs
 ### 推理服务协议
 
 `serve_smolvlm_libero.py` 通过 `msgpack_numpy` 序列化暴露 **WebSocket** 服务器。接收：`{observation/image, observation/wrist_image, observation/state, prompt}`。返回：`{actions: [[7维] × horizon]}`。
+
+## 功能规划文档
+
+`docs/superpowers/` 目录存放架构设计与功能规划文档：
+- `plans/`：功能提案（双流融合、MoE 动作头、自蒸馏训练等）
+- `specs/`：详细设计规范
+
+新增功能前可先查阅此目录，避免与已有规划重复。
