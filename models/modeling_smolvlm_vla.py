@@ -108,23 +108,13 @@ class SmolVLMVLA(PreTrainedModel):
         self.dual_stream_fusion = None
         if config.use_dual_stream:
             from .dual_stream import DualStreamFusion
-            # 获取 VLM connector 输出维度
-            vlm_hidden = 576  # SmolVLM-500M 默认
-            if hasattr(self.vlm.model, 'connector'):
-                try:
-                    vlm_hidden = self.vlm.model.connector.proj.out_features
-                except AttributeError:
-                    pass
-            elif hasattr(self.vlm.model, 'multi_modal_projector'):
-                try:
-                    vlm_hidden = self.vlm.model.multi_modal_projector.proj.out_features
-                except AttributeError:
-                    pass
+            # VLM features 是 text_model 的输出，维度等于 text_config.hidden_size
+            vlm_hidden = self.vlm.config.text_config.hidden_size
             self.dual_stream_fusion = DualStreamFusion(
                 hidden_size=vlm_hidden,
                 fusion_type=config.dual_stream_fusion,
             )
-            logging.info(f"[SmolVLMVLA] Dual-stream fusion enabled: {config.dual_stream_fusion}")
+            logging.info(f"[SmolVLMVLA] Dual-stream fusion enabled: {config.dual_stream_fusion}, hidden_size={vlm_hidden}")
 
         # Deferred FastAPI app
         self.app: FastAPI | None = None
@@ -370,11 +360,12 @@ class SmolVLMVLA(PreTrainedModel):
             enc["vlm_features"] = self.dual_stream_fusion(
                 enc["vlm_features"],
                 enc["num_valid_views"],
+                num_patches_per_view=enc.get("num_patches_per_view"),
             )
 
         B = input_ids.shape[0]
         device = input_ids.device
-        
+
         # Beta(1.5, 1) time sampling
         beta_dist = torch.distributions.Beta(
             torch.tensor(1.5, device=device), 
@@ -443,6 +434,7 @@ class SmolVLMVLA(PreTrainedModel):
             enc["vlm_features"] = self.dual_stream_fusion(
                 enc["vlm_features"],
                 enc["num_valid_views"],
+                num_patches_per_view=enc.get("num_patches_per_view"),
             )
 
         B = input_ids.shape[0]

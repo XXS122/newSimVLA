@@ -112,6 +112,7 @@ class DualStreamFusion(nn.Module):
         self,
         vlm_features: torch.Tensor,     # [B, T_enc, D]
         num_valid_views: torch.Tensor,  # [B] 每个样本的有效视角数
+        num_patches_per_view: int | None = None,  # 覆盖初始化时的默认值
     ) -> torch.Tensor:
         """
         融合静态流和动态流特征。
@@ -119,7 +120,7 @@ class DualStreamFusion(nn.Module):
         文本 token 部分保持不变，只融合图像 token 部分。
         """
         B, T_enc, D = vlm_features.shape
-        n = self.num_patches_per_view
+        n = num_patches_per_view if num_patches_per_view is not None else self.num_patches_per_view
 
         max_img_tokens = int(max(num_valid_views).item()) * n
         img_tokens = vlm_features[:, :max_img_tokens, :]
