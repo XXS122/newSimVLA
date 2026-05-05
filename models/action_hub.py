@@ -309,6 +309,9 @@ class VLABenchJointActionSpace(BaseActionSpace):
         if "actions" in stats_dict:
             self.action_norm_stats = stats_dict["actions"]
 
+    def load_norm_stats(self, path: str):
+        self._load(path)
+
     def to(self, device):
         if self.state_norm_stats is not None:
             self.state_norm_stats.to(device)

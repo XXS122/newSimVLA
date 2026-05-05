@@ -12,12 +12,15 @@ import json
 import os
 
 
-def create_vlabench_meta(data_dir: str, output_path: str | None = None) -> dict:
+def create_vlabench_meta(data_dir: str, output_path: str | None = None, max_files: int | None = None) -> dict:
     pattern = os.path.join(data_dir, "primitive-train.tfrecord-*-of-*")
     shard_files = sorted(glob.glob(pattern))
 
     if not shard_files:
         raise FileNotFoundError(f"No TFRecord shards found in {data_dir}")
+
+    if max_files is not None:
+        shard_files = shard_files[:max_files]
 
     datalist = [os.path.basename(f) for f in shard_files]
 
@@ -46,7 +49,9 @@ if __name__ == "__main__":
         default=os.environ.get("SIMVLA_VLABENCH_DATA", "./datasets/vlabench/data/1.0.0"),
     )
     parser.add_argument("--output", required=True)
+    parser.add_argument("--max_files", type=int, default=None,
+                        help="只使用前 N 个 shard（用于生成调试子集）")
     args = parser.parse_args()
 
-    meta = create_vlabench_meta(args.data_dir, args.output)
+    meta = create_vlabench_meta(args.data_dir, args.output, args.max_files)
     print(f"Found {meta['num_files']} shard files")

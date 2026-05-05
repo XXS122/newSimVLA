@@ -40,7 +40,9 @@ class VLABenchRLDSHandler(DomainHandler):
         lang_aug_map: dict | None = None,
         **kwargs,
     ) -> Iterable[dict]:
-        import tensorflow as tf  # lazy import — TF GPU disabled by worker_init_fn
+        os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+        os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+        import tensorflow as tf  # lazy import
 
         shard_name = self.shard_files[traj_idx]
         shard_path = (
