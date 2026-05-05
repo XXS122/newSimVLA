@@ -22,6 +22,8 @@ class CrossAttentionFusion(nn.Module):
 
     def __init__(self, hidden_size: int, num_heads: int = 8) -> None:
         super().__init__()
+        assert hidden_size % num_heads == 0, \
+            f"hidden_size ({hidden_size}) must be divisible by num_heads ({num_heads})"
         self.num_heads = num_heads
         self.head_dim = hidden_size // num_heads
         self.scale = self.head_dim ** -0.5
@@ -36,6 +38,7 @@ class CrossAttentionFusion(nn.Module):
         self,
         static_feat: torch.Tensor,   # [B, T_s, D]
         dynamic_feat: torch.Tensor,  # [B, T_d, D]
+        key_padding_mask: torch.Tensor | None = None,  # [B, T_d] True=屏蔽
     ) -> torch.Tensor:
         """返回融合后的特征 [B, T_s, D]，维度与 static_feat 相同。"""
         B, T_s, D = static_feat.shape
@@ -46,10 +49,22 @@ class CrossAttentionFusion(nn.Module):
         v = self.v_proj(dynamic_feat).reshape(B, T_d, self.num_heads, self.head_dim).transpose(1, 2)
 
         if hasattr(F, "scaled_dot_product_attention"):
-            out = F.scaled_dot_product_attention(q, k, v)
+            # key_padding_mask: [B, T_d] → attn_mask: [B, num_heads, T_s, T_d]
+            attn_mask = None
+            if key_padding_mask is not None:
+                attn_mask = key_padding_mask[:, None, None, :].expand(
+                    B, self.num_heads, T_s, T_d
+                )
+                attn_mask = attn_mask.to(dtype=static_feat.dtype) * -1e4
+            out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
         else:
             attn = (q * self.scale) @ k.transpose(-2, -1)
+            if key_padding_mask is not None:
+                attn = attn.masked_fill(
+                    key_padding_mask[:, None, None, :], float('-inf')
+                )
             attn = attn.softmax(dim=-1)
+            attn = self.attn_drop(attn) if hasattr(self, 'attn_drop') else attn
             out = attn @ v
 
         out = out.transpose(1, 2).reshape(B, T_s, D)
@@ -165,14 +180,24 @@ class DualStreamFusion(nn.Module):
                 torch.cat([static_padded, dynamic_gap], dim=-1)
             ))
         else:  # cross_attn
-            fused_static = self.cross_attn(static_padded, dynamic_padded)
+            # 构造 dynamic padding mask：True = 屏蔽 padding 位置
+            dynamic_mask = torch.zeros(B, max_d, dtype=torch.bool, device=vlm_features.device)
+            for b in range(B):
+                n_d = dynamic_parts[b].shape[0]
+                if n_d < max_d:
+                    dynamic_mask[b, n_d:] = True
+            fused_static = self.cross_attn(static_padded, dynamic_padded, key_padding_mask=dynamic_mask)
 
         fused_img_tokens = img_tokens.clone()
         for b in range(B):
             n_valid = int(num_valid_views[b].item())
             s_idx, _ = self._get_stream_indices(n_valid)
             for j, i in enumerate(s_idx):
-                fused_img_tokens[b, i*n:(i+1)*n] = fused_static[b, j*n:(j+1)*n]
+                # 只写入有效 token，不写 padding 部分
+                src_start = j * n
+                src_end = src_start + n
+                if src_end <= static_parts[b].shape[0]:
+                    fused_img_tokens[b, i*n:(i+1)*n] = fused_static[b, src_start:src_end]
 
         return torch.cat([fused_img_tokens, text_tokens], dim=1)
 
