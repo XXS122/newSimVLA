@@ -91,7 +91,10 @@ accelerate launch --num_processes=4 --mixed_precision bf16 train_smolvlm.py \
     --norm_stats_path ./norm_stats/libero_norm.json \
     --action_mode libero_joint \
     --batch_size 32 --learning_rate 1e-4 --num_actions 10 \
-    --hidden_size 768 --depth 12 --num_heads 12 --image_size 384
+    --hidden_size 768 --depth 12 --num_heads 12 --image_size 384 \
+    --num_views 3                       # LIBERO 用 3，VLABench 用 4
+    # 可选：--use_adaln                 # 启用 DiT/AdaLN 模式
+    # 可选：--use_dual_stream --dual_stream_fusion cross_attn  # 启用双流融合
 ```
 
 **准备 VLABench 元数据和归一化统计（一次性）：**
@@ -122,6 +125,16 @@ bash run_eval_all.sh 8102 50 "eval_run_name" "0 1 2 3"  # num_trials=50
 ```
 
 `libero` 环境需单独创建：`conda create -n libero python=3.8.13`，并安装 LIBERO 模拟器包。
+
+**VLABench 评估**（在 `simvla` 环境中启动服务器，在 VLABench 专属环境中运行客户端）：
+```bash
+cd evaluation/vlabench
+CUDA_VISIBLE_DEVICES=0 python serve_smolvlm_vlabench.py \
+    --checkpoint ../../runs/simvla_vlabench_small/ckpt-XXXXX \
+    --norm_stats ../../norm_stats/vlabench_norm.json --port 8103
+# 然后在 vlabench 环境中：
+bash run_eval_vlabench.sh 8103 "eval_run_name"
+```
 
 ## 架构
 
@@ -161,7 +174,9 @@ SmolVLM 视觉编码器        SmolVLM 分词器
   - `vlabench_joint`：`dim_action=7`，`dim_proprio=7`
   - 用 `@register_action("name")` 装饰器添加新动作空间
 
-- **`models/configuration_smolvlm_vla.py`**：`SmolVLMVLAConfig`（HuggingFace `PretrainedConfig`）。关键字段：`smolvlm_model_path`、`hidden_size`、`depth`、`num_heads`、`action_mode`、`num_actions`、`use_adaln`、`image_size`
+- **`models/dual_stream.py`**：`DualStreamFusion`——可选的双流多视角融合模块。将 VLM 特征按视角分为静态流（agentview/front/image_0/image_1）和动态流（wrist），支持三种融合方式：`add`（相加）、`concat_linear`（拼接+线性）、`cross_attn`（跨注意力，默认）。由 `SmolVLMVLAConfig.use_dual_stream` 控制是否启用。
+
+- **`models/configuration_smolvlm_vla.py`**：`SmolVLMVLAConfig`（HuggingFace `PretrainedConfig`）。关键字段：`smolvlm_model_path`、`hidden_size`、`depth`、`num_heads`、`action_mode`、`num_actions`、`use_adaln`、`image_size`、`use_dual_stream`、`dual_stream_fusion`、`num_views`
 
 - **`models/processing_smolvlm_vla.py`**：`SmolVLMVLAProcessor`，处理图像预处理（ImageNet 归一化、双三次插值缩放）和语言分词。`encode_image()` 为快速 GPU 路径；`encode_image_legacy()` 使用 HuggingFace processor
 
@@ -170,6 +185,8 @@ SmolVLM 视觉编码器        SmolVLM 分词器
 - **`datasets/domain_handler/libero_hdf5.py`**：`LiberoHDF5Handler`——读取 LIBERO HDF5 文件。图像在处理前**旋转 180°**，欧拉角转换为轴角表示作为本体感知
 
 - **`datasets/domain_handler/vlabench_rlds.py`**：`VLABenchRLDSHandler`——读取 VLABench RLDS/TFRecord 格式。4 个视角：front、wrist、image_0、image_1。无图像旋转，无欧拉角→轴角转换
+
+- **`datasets/domain_handler/registry.py`**：数据集 handler 注册表，将数据集名称映射到 handler 类。添加新数据集需：①继承 `DomainHandler`（或 `BaseHDF5Handler`）并实现 `iter_episode()`；②在 `registry.py` 的 `_REGISTRY` 字典中注册；③在 `domain_config.py` 的 `DATA_WEIGHTS` 中添加权重。
 
 - **`datasets/domain_config.py`**：`DATA_WEIGHTS` 字典控制多数据集混合时的采样权重
 
