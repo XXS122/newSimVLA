@@ -4,3 +4,4 @@ runs/
 paths.env
 *.json
 norm_stats/vlabench_norm.json
+datasets/metas
