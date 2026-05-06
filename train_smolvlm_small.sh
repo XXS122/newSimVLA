@@ -39,7 +39,7 @@ export TF_CPP_MIN_LOG_LEVEL=2
 # Path configuration
 # =============================================================================
 SMOLVLM_MODEL="${SIMVLA_SMOLVLM_MODEL:-HuggingFaceTB/SmolVLM-500M-Instruct}"
-LIBERO_DATA_DIR="./datasets/metas"
+LIBERO_DATA_DIR="${SIMVLA_LIBERO_DATA:-./datasets/metas}"
 NORM_STATS_PATH="./norm_stats/libero_norm.json"
 TRAIN_METAS_PATH="./datasets/metas/libero_train.json"
 

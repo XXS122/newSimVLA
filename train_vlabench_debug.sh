@@ -19,8 +19,12 @@ fi
 
 BATCH_SIZE=${1:-16}
 LEARNING_COEF=${2:-0.1}
-OUTPUT_DIR=${3:-./runs/simvla_vlabench_debug}
-RESUME_CKPT=${4:-""}
+RESUME_CKPT=${3:-""}
+
+# 时间戳子目录（精确到小时）
+TIMESTAMP=$(date +"%Y%m%d_%H")
+BASE_OUTPUT_DIR="${SIMVLA_OUTPUT_DIR:-./runs}"
+OUTPUT_DIR="${BASE_OUTPUT_DIR}/vlabench_debug_${TIMESTAMP}"
 
 echo "Debug training parameters:"
 echo "   batch_size: $BATCH_SIZE"
@@ -63,7 +67,7 @@ HIDDEN_SIZE=768
 DEPTH=12
 NUM_HEADS=12
 USE_ADALN=false
-USE_DUAL_STREAM=true          # 启用双流融合
+USE_DUAL_STREAM=false          # 启用双流融合
 DUAL_STREAM_FUSION=cross_attn # add | concat_linear | cross_attn
 
 # =============================================================================
@@ -129,6 +133,42 @@ fi
 # =============================================================================
 # Step 4: Start debug training
 # =============================================================================
+
+# 创建输出目录并写 run_info.txt
+mkdir -p "${OUTPUT_DIR}"
+cat > "${OUTPUT_DIR}/run_info.txt" << EOF
+===== SimVLA VLABench Debug Training =====
+时间：$(date "+%Y-%m-%d %H:%M:%S")
+算法：SimVLA + VLABench RLDS
+双流融合：${USE_DUAL_STREAM} (${DUAL_STREAM_FUSION})
+Action Transformer：hidden=${HIDDEN_SIZE}, depth=${DEPTH}, heads=${NUM_HEADS}, adaln=${USE_ADALN}
+
+数据：
+  VLABench data dir: ${VLABENCH_DATA_DIR}
+  Debug shards: ${DEBUG_MAX_FILES} / 512
+  Norm stats: ${NORM_STATS_PATH}
+  Train metas: ${TRAIN_METAS_PATH}
+
+模型：
+  SmolVLM backbone: ${SMOLVLM_MODEL}
+  Action mode: vlabench_joint
+  Num views: ${NUM_VIEWS}
+  Num actions: ${NUM_ACTIONS}
+  Image size: 384x384
+
+训练参数：
+  Batch size: ${BATCH_SIZE}
+  Learning rate: ${LEARNING_RATE}
+  Learning coef: ${LEARNING_COEF}
+  Iters: ${ITERS}
+  Freeze steps: ${FREEZE_STEPS}
+  Save interval: ${SAVE_INTERVAL}
+
+Resume checkpoint: ${RESUME_CKPT:-None}
+GPU: CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}, num_processes=${NUM_GPUS}
+Output dir: ${OUTPUT_DIR}
+EOF
+
 echo "============================================================"
 echo "Starting SimVLA DEBUG Training on VLABench"
 echo "============================================================"

@@ -18,12 +18,36 @@ PORT=${1:-8200}
 N_EPISODE=${2:-10}
 EVAL_TRACK=${3:-track_debug_simple}
 SAVE_NAME=${4:-simvla_eval}
+CHECKPOINT=${5:-"unknown"}
+
+# Auto-load paths.env if present and vars not already set
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+if [ -f "${REPO_ROOT}/paths.env" ] && [ -z "${SIMVLA_VLABENCH_CODE}" ]; then
+    source "${REPO_ROOT}/paths.env"
+fi
 
 VLABENCH_DIR="${SIMVLA_VLABENCH_CODE:-/datasets/code/VLABench}"
-SAVE_DIR="${SIMVLA_EVAL_RESULTS:-./eval_results}/${SAVE_NAME}"
+
+# 时间戳子目录（精确到小时）
+TIMESTAMP=$(date +"%Y%m%d_%H")
+SAVE_DIR="${SIMVLA_EVAL_RESULTS:-./eval_results}/${SAVE_NAME}_${TIMESTAMP}"
 
 export VLABENCH_ROOT="${VLABENCH_DIR}/VLABench"
 export MUJOCO_GL=egl
+
+# 创建保存目录并写 eval_info.txt
+mkdir -p "${SAVE_DIR}"
+cat > "${SAVE_DIR}/eval_info.txt" << EOF
+===== SimVLA VLABench Evaluation =====
+时间：$(date "+%Y-%m-%d %H:%M:%S")
+Checkpoint 路径：${CHECKPOINT}
+评估 track：${EVAL_TRACK}
+每个任务 episodes：${N_EPISODE}
+服务器端口：${PORT}
+VLABench 目录：${VLABENCH_DIR}
+结果保存目录：${SAVE_DIR}
+EOF
 
 echo "============================================================"
 echo "SimVLA VLABench Evaluation"
@@ -31,6 +55,7 @@ echo "============================================================"
 echo "Server:     localhost:${PORT}"
 echo "Track:      ${EVAL_TRACK}"
 echo "Episodes:   ${N_EPISODE} per task"
+echo "Checkpoint: ${CHECKPOINT}"
 echo "Save dir:   ${SAVE_DIR}"
 echo "============================================================"
 

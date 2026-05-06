@@ -21,8 +21,12 @@ fi
 
 BATCH_SIZE=${1:-32}
 LEARNING_COEF=${2:-0.1}
-OUTPUT_DIR=${3:-./runs/simvla_vlabench_small}
-RESUME_CKPT=${4:-""}
+RESUME_CKPT=${3:-""}
+
+# 时间戳子目录（精确到小时）
+TIMESTAMP=$(date +"%Y%m%d_%H")
+BASE_OUTPUT_DIR="${SIMVLA_OUTPUT_DIR:-./runs}"
+OUTPUT_DIR="${BASE_OUTPUT_DIR}/vlabench_small_${TIMESTAMP}"
 
 echo "Training parameters:"
 echo "   batch_size: $BATCH_SIZE"
@@ -121,6 +125,40 @@ fi
 # =============================================================================
 # Step 4: Start training
 # =============================================================================
+
+# 创建输出目录并写 run_info.txt
+mkdir -p "${OUTPUT_DIR}"
+cat > "${OUTPUT_DIR}/run_info.txt" << EOF
+===== SimVLA VLABench Small Training =====
+时间：$(date "+%Y-%m-%d %H:%M:%S")
+算法：SimVLA + VLABench RLDS（全量训练）
+Action Transformer：hidden=${HIDDEN_SIZE}, depth=${DEPTH}, heads=${NUM_HEADS}, adaln=${USE_ADALN}
+
+数据：
+  VLABench data dir: ${VLABENCH_DATA_DIR}
+  Norm stats: ${NORM_STATS_PATH}
+  Train metas: ${TRAIN_METAS_PATH}
+
+模型：
+  SmolVLM backbone: ${SMOLVLM_MODEL}
+  Action mode: vlabench_joint
+  Num views: ${NUM_VIEWS}
+  Num actions: ${NUM_ACTIONS}
+  Image size: 384x384
+
+训练参数：
+  Batch size: ${BATCH_SIZE}
+  Learning rate: ${LEARNING_RATE}
+  Learning coef: ${LEARNING_COEF}
+  Iters: ${ITERS}
+  Freeze steps: ${FREEZE_STEPS}
+  Save interval: ${SAVE_INTERVAL}
+
+Resume checkpoint: ${RESUME_CKPT:-None}
+GPU: CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}, num_processes=${NUM_GPUS}
+Output dir: ${OUTPUT_DIR}
+EOF
+
 echo "============================================================"
 echo "Starting SimVLA Training on VLABench (Small Action Transformer)"
 echo "============================================================"
