@@ -340,6 +340,7 @@ def main(args):
         logger.info(f"  action_mode: {args.action_mode}")
         logger.info(f"  num_actions: {args.num_actions}")
         logger.info(f"  use_adaln: {args.use_adaln}")
+        logger.info(f"  use_dual_stream: {args.use_dual_stream}")
         
         config = SmolVLMVLAConfig(
             smolvlm_model_path=args.smolvlm_model_path,
@@ -350,6 +351,7 @@ def main(args):
             num_actions=args.num_actions,
             use_adaln=args.use_adaln,
             image_size=args.image_size,
+            num_views=args.num_views,
             use_dual_stream=args.use_dual_stream,
             dual_stream_fusion=args.dual_stream_fusion,
         )

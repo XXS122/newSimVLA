@@ -17,13 +17,27 @@
 import argparse
 import os
 import random
+from pathlib import Path
+
+# Auto-load paths.env if present
+_paths_env = Path(__file__).parent / "paths.env"
+if _paths_env.exists():
+    for _line in _paths_env.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip().strip('"'))
+
+# 禁止 HuggingFace 联网，强制使用本地缓存/路径
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_DATASETS_OFFLINE"] = "1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import numpy as np
 import torch
 from PIL import Image
 import io
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 try:
     import tensorflow as _tf
     _tf.config.set_visible_devices([], "GPU")
@@ -41,10 +55,22 @@ def load_model(checkpoint_path, norm_stats_path, device):
     model.to(device)
 
     if norm_stats_path and os.path.exists(norm_stats_path):
-        model.action_space.load_norm_stats(norm_stats_path)
+        if hasattr(model.action_space, 'load_norm_stats'):
+            model.action_space.load_norm_stats(norm_stats_path)
+        elif hasattr(model.action_space, '_load'):
+            model.action_space._load(norm_stats_path)
         model.action_space.to(device)
 
-    processor = SmolVLMVLAProcessor.from_pretrained(checkpoint_path)
+    # 优先从 checkpoint 加载 processor，fallback 到 config 里的本地路径
+    try:
+        processor = SmolVLMVLAProcessor.from_pretrained(checkpoint_path)
+    except Exception:
+        smolvlm_path = model.config.smolvlm_model_path
+        print(f"Falling back to smolvlm_model_path: {smolvlm_path}")
+        processor = SmolVLMVLAProcessor.from_pretrained(smolvlm_path)
+
+    # 确保 processor 的 num_views 与模型一致
+    processor.num_views = model.config.num_views
     return model, processor
 
 
@@ -122,14 +148,11 @@ def evaluate(model, processor, samples, device, batch_size=8, num_actions=10):
         lang = processor.encode_language(languages)
         input_ids = lang["input_ids"].to(device)
 
-        # 编码图像
-        # images: list of [4 PIL images] per sample → [B, 4, C, H, W]
-        img_tensors = []
-        for s in batch:
-            imgs_t = processor.encode_image(s["images"])  # [4, C, H, W]
-            img_tensors.append(imgs_t)
-        image_input = torch.stack(img_tensors, dim=0).to(device)  # [B, 4, C, H, W]
-        image_mask = torch.ones(len(batch), 4, dtype=torch.bool, device=device)
+        # 编码图像：encode_image 接受 batch 形式 [[img1,img2,...], ...]
+        all_images = [s["images"] for s in batch]
+        img_out = processor.encode_image(all_images)
+        image_input = img_out["image_input"].to(device)   # [B, 4, C, H, W]
+        image_mask = img_out["image_mask"].to(device)     # [B, 4]
 
         # proprio
         proprio = torch.tensor(
@@ -177,6 +200,8 @@ def main():
     parser.add_argument("--num_samples", type=int, default=200, help="采样的样本数量")
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--num_actions", type=int, default=10)
+    parser.add_argument("--num_views", type=int, default=None,
+                        help="视角数，默认从 checkpoint config 读取")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
@@ -186,6 +211,10 @@ def main():
 
     # 加载模型
     model, processor = load_model(args.checkpoint, args.norm_stats, args.device)
+
+    # 覆盖 num_views（用于旧 checkpoint config 里 num_views 不正确的情况）
+    if args.num_views is not None:
+        processor.num_views = args.num_views
 
     # 加载样本
     print(f"Loading {args.num_samples} samples from {args.num_shards} shards ...")

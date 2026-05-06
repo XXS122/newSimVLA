@@ -32,6 +32,16 @@ from typing import Any, Dict, Optional
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["HF_DATASETS_OFFLINE"] = "1"
 
+# Auto-load paths.env if present
+_repo_root = Path(__file__).parent.parent.parent
+_paths_env = _repo_root / "paths.env"
+if _paths_env.exists():
+    for _line in _paths_env.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip().strip('"'))
+
 import numpy as np
 import torch
 from PIL import Image
