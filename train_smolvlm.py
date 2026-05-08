@@ -145,6 +145,8 @@ def get_args_parser():
                         help="Resume training from checkpoint")
     
     # DiT/AdaLN mode
+    parser.add_argument("--use_adaln_hybrid", action="store_true", default=False,
+                        help="混合模式：AdaLN 注入 time+proprio，VLM token 拼接进序列（DiT arxiv:2212.09748 + π0 arxiv:2410.24164）")
     parser.add_argument("--use_adaln", action="store_true", default=False,
                         help="Use DiT-style AdaLN conditioning")
     
@@ -162,6 +164,35 @@ def get_args_parser():
     parser.add_argument("--dual_stream_fusion", type=str, default="cross_attn",
                         choices=["add", "concat_linear", "cross_attn"],
                         help="双流融合方式")
+
+    # === Flow Matching 时间采样（SD3 arxiv:2403.03206）===
+    parser.add_argument("--time_sampling", type=str, default="logit_normal",
+                        choices=["logit_normal", "beta"],
+                        help="时间步采样策略：logit_normal（SD3推荐）或 beta（旧行为）")
+    parser.add_argument("--logit_normal_mean", type=float, default=0.0,
+                        help="Logit-Normal 均值（默认 0.0）")
+    parser.add_argument("--logit_normal_std", type=float, default=1.0,
+                        help="Logit-Normal 标准差（默认 1.0）")
+
+    # === View Dropout + Learned Missing Token ===
+    parser.add_argument("--use_view_dropout", action="store_true", default=False,
+                        help="训练时随机丢弃视角，提升对缺失视角的鲁棒性")
+    parser.add_argument("--view_dropout_prob", type=float, default=0.1,
+                        help="每个视角被 dropout 的概率（默认 0.1）")
+    parser.add_argument("--use_missing_token", action="store_true", default=False,
+                        help="用可学习 token 替代缺失视角的零填充（需同时启用 use_dual_stream）")
+
+    # === Proprio 历史窗口（Diffusion Policy arxiv:2303.04137）===
+    parser.add_argument("--proprio_history_len", type=int, default=1,
+                        help="Proprio 历史帧数（1=无历史，>1 用 GRU 编码历史）")
+
+    # === 辅助运动预测头（Joint Motion Image Diffusion, arxiv:2512.18007）===
+    parser.add_argument("--use_motion_head", action="store_true", default=False,
+                        help="启用辅助运动预测头（预测全局光流向量，辅助 VLM 特征学运动能力）")
+    parser.add_argument("--motion_out_dim", type=int, default=6,
+                        help="运动预测头输出维度（num_views × 2，默认 3视角×2=6）")
+    parser.add_argument("--motion_loss_weight", type=float, default=0.1,
+                        help="辅助运动损失权重 λ（默认 0.1）")
 
     return parser
 
@@ -350,10 +381,21 @@ def main(args):
             action_mode=args.action_mode,
             num_actions=args.num_actions,
             use_adaln=args.use_adaln,
+            use_adaln_hybrid=args.use_adaln_hybrid,
             image_size=args.image_size,
             num_views=args.num_views,
             use_dual_stream=args.use_dual_stream,
             dual_stream_fusion=args.dual_stream_fusion,
+            time_sampling=args.time_sampling,
+            logit_normal_mean=args.logit_normal_mean,
+            logit_normal_std=args.logit_normal_std,
+            use_view_dropout=args.use_view_dropout,
+            view_dropout_prob=args.view_dropout_prob,
+            use_missing_token=args.use_missing_token,
+            proprio_history_len=args.proprio_history_len,
+            use_motion_head=args.use_motion_head,
+            motion_out_dim=args.motion_out_dim,
+            motion_loss_weight=args.motion_loss_weight,
         )
         model = SmolVLMVLA(config)
         
@@ -364,6 +406,7 @@ def main(args):
     processor = SmolVLMVLAProcessor.from_pretrained(args.smolvlm_model_path)
 
     # Create SmolVLM dataloader (384x384 images)
+    view_dp = args.view_dropout_prob if args.use_view_dropout else 0.0
     train_dataloader = create_smolvlm_dataloader(
         batch_size=args.batch_size,
         metas_path=args.train_metas_path,
@@ -373,6 +416,7 @@ def main(args):
         num_workers=args.num_workers,
         image_size=args.image_size,
         num_views=args.num_views,
+        view_dropout_prob=view_dp,
     )
 
     # Optimizer

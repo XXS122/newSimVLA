@@ -176,12 +176,14 @@ class LiberoJointActionSpace(BaseActionSpace):
         self,
         norm_stats_path: Optional[str] = None,
         use_quantile_norm: bool = False,
+        gripper_loss_weight: float = 2.0,
     ):
         super().__init__()
         self.use_quantile_norm = use_quantile_norm
+        self.gripper_loss_weight = gripper_loss_weight
         self.state_norm_stats: Optional[NormStats] = None
         self.action_norm_stats: Optional[NormStats] = None
-        
+
         if norm_stats_path:
             self.load_norm_stats(norm_stats_path)
             
@@ -256,8 +258,13 @@ class LiberoJointActionSpace(BaseActionSpace):
         return x
 
     def compute_loss(self, pred, target):
-        """Full-dimension MSE loss."""
-        loss = torch.square(pred - target)
+        """分组加权 MSE 损失：gripper 维度权重更高（近二值信号）。"""
+        loss = torch.square(pred - target)   # [..., 7]
+        if self.gripper_loss_weight != 1.0 and self.gripper_idx:
+            weights = torch.ones(loss.shape[-1], device=loss.device, dtype=loss.dtype)
+            for gi in self.gripper_idx:
+                weights[gi] = self.gripper_loss_weight
+            loss = loss * weights
         return {"velocity_loss": torch.mean(loss)}
 
     def preprocess(self, proprio, action, mode="train"):
@@ -267,8 +274,15 @@ class LiberoJointActionSpace(BaseActionSpace):
         return proprio_norm, action_norm
 
     def postprocess(self, action: torch.Tensor) -> torch.Tensor:
-        """Unnormalize action."""
-        return self.unnormalize_action(action)
+        """推理后处理：反归一化 + gripper 二值化（夹至 0/1）。"""
+        action = self.unnormalize_action(action)
+        # Gripper 是近二值命令，推理时硬化为 {-1, +1}，减少连续值抖动
+        if self.gripper_idx:
+            for gi in self.gripper_idx:
+                action[..., gi] = torch.where(action[..., gi] > 0,
+                                               torch.ones_like(action[..., gi]),
+                                               -torch.ones_like(action[..., gi]))
+        return action
 
 
 
@@ -293,9 +307,11 @@ class VLABenchJointActionSpace(BaseActionSpace):
         self,
         norm_stats_path: Optional[str] = None,
         use_quantile_norm: bool = False,
+        gripper_loss_weight: float = 2.0,
     ):
         super().__init__()
         self.use_quantile_norm = use_quantile_norm
+        self.gripper_loss_weight = gripper_loss_weight
         self.state_norm_stats: Optional[NormStats] = None
         self.action_norm_stats: Optional[NormStats] = None
 
@@ -338,7 +354,14 @@ class VLABenchJointActionSpace(BaseActionSpace):
         return x * (stats.std[..., :D] + 1e-6) + stats.mean[..., :D]
 
     def compute_loss(self, pred, target):
-        return {"velocity_loss": torch.mean(torch.square(pred - target))}
+        """分组加权 MSE 损失：gripper 维度权重更高（近二值信号）。"""
+        loss = torch.square(pred - target)
+        if self.gripper_loss_weight != 1.0 and self.gripper_idx:
+            weights = torch.ones(loss.shape[-1], device=loss.device, dtype=loss.dtype)
+            for gi in self.gripper_idx:
+                weights[gi] = self.gripper_loss_weight
+            loss = loss * weights
+        return {"velocity_loss": torch.mean(loss)}
 
     def preprocess(self, proprio, action, mode="train"):
         if self.state_norm_stats is not None:
@@ -348,8 +371,14 @@ class VLABenchJointActionSpace(BaseActionSpace):
         return proprio, action
 
     def postprocess(self, action: torch.Tensor) -> torch.Tensor:
+        """推理后处理：反归一化 + gripper 二值化。"""
         if self.action_norm_stats is not None:
-            return self._unnorm(action, self.action_norm_stats)
+            action = self._unnorm(action, self.action_norm_stats)
+        if self.gripper_idx:
+            for gi in self.gripper_idx:
+                action[..., gi] = torch.where(action[..., gi] > 0,
+                                               torch.ones_like(action[..., gi]),
+                                               -torch.ones_like(action[..., gi]))
         return action
 
 

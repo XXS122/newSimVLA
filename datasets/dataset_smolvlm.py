@@ -49,20 +49,22 @@ class SmolVLMDataReader(IterableDataset):
     IMAGE_STD = (0.229, 0.224, 0.225)
     
     def __init__(
-        self, 
-        metas_path: str, 
-        num_actions: int = 10, 
-        num_views: int = 3, 
+        self,
+        metas_path: str,
+        num_actions: int = 10,
+        num_views: int = 3,
         training: bool = True,
         action_mode: str = "galaxea_joint",
         lang_aug: str = None,
         image_size: int = 384,  # Default 384, can be 384 or 512
+        view_dropout_prob: float = 0.0,  # 训练时随机丢弃视角的概率（0=关闭）
     ):
         self.num_views = num_views
         self.training = training
         self.num_actions = num_actions
         self.action_mode = action_mode
         self.image_size = image_size
+        self.view_dropout_prob = view_dropout_prob if training else 0.0
         self.metas: Dict[str, dict] = {}
         
         print(f"[SmolVLM Dataset] Image size: {self.image_size}x{self.image_size}")
@@ -164,6 +166,19 @@ class SmolVLMDataReader(IterableDataset):
                     else:
                         sample.update(slice_result)
                     del sample["abs_trajectory"]
+
+                    # View Dropout：训练时随机将视角标记为无效
+                    # 至少保留 1 个有效视角，确保模型始终有输入
+                    if self.view_dropout_prob > 0 and "image_mask" in sample:
+                        mask = sample["image_mask"].clone()
+                        valid_indices = mask.nonzero(as_tuple=True)[0].tolist()
+                        if len(valid_indices) > 1:
+                            for vi in valid_indices:
+                                if random.random() < self.view_dropout_prob:
+                                    # 确保不把最后一个有效视角也 dropout 掉
+                                    if mask.sum() > 1:
+                                        mask[vi] = False
+                        sample["image_mask"] = mask
 
                     yield sample
             except Exception as e:
@@ -291,6 +306,7 @@ def create_smolvlm_dataloader(
     image_size: int = 384,
     use_smart_padding: bool = False,
     num_views: int = 3,
+    view_dropout_prob: float = 0.0,
 ):
     """
     Create dataloader for SmolVLM-VLA training.
@@ -351,6 +367,7 @@ def create_smolvlm_dataloader(
         action_mode=action_mode,
         image_size=image_size,
         num_views=num_views,
+        view_dropout_prob=view_dropout_prob,
     )
     
     return DataLoader(

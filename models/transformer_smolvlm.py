@@ -277,6 +277,8 @@ class SmolVLMActionTransformer(nn.Module):
         dim_time: int = 32,
         max_len_seq: int = 1024,
         use_adaln: bool = False,
+        proprio_history_len: int = 1,  # K=1 → 无历史（原行为）；K>1 → 使用 GRU 编码历史
+        use_adaln_hybrid: bool = False,  # 混合模式：AdaLN(time+proprio) + Concat(VLM token)
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
@@ -284,13 +286,42 @@ class SmolVLMActionTransformer(nn.Module):
         self.dim_time = dim_time
         self.dim_propio = dim_propio
         self.use_adaln = use_adaln
+        self.use_adaln_hybrid = use_adaln_hybrid
+        self.proprio_history_len = proprio_history_len
 
-        if use_adaln:
+        if use_adaln_hybrid:
+            # ====== Hybrid Mode: AdaLN（time+proprio）+ Concat（VLM token 保留在序列里）======
+            # 参考 DiT (arxiv:2212.09748) + π0 (arxiv:2410.24164)
+            # DiTBlock 处理全局低维条件；VLM 图像 token 保留空间细节
+            self.blocks = nn.ModuleList(
+                [DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)]
+            )
+            # 全局条件编码（time + proprio），不再池化 VLM
+            self.time_proj = nn.Sequential(
+                nn.Linear(hidden_size, hidden_size),
+                nn.SiLU(),
+                nn.Linear(hidden_size, hidden_size),
+            )
+            if proprio_history_len > 1:
+                self.proprio_gru = nn.GRU(dim_propio, hidden_size, batch_first=True)
+                self.proprio_proj = None
+            else:
+                self.proprio_proj = nn.Linear(dim_propio, hidden_size)
+                self.proprio_gru = None
+            # VLM 投影到 action 空间（拼接进序列）
+            self.vlm_proj = nn.Linear(vlm_hidden_size, hidden_size)
+            # Action encoder（无需携带 time/proprio，它们由 AdaLN 注入）
+            self.action_encoder = nn.Linear(dim_action, hidden_size)
+            self.pos_emb = nn.Parameter(torch.zeros(1, max_len_seq, hidden_size), requires_grad=True)
+            nn.init.normal_(self.pos_emb, std=0.02)
+            self.final_layer = FinalLayer(hidden_size, dim_action)
+
+        elif use_adaln:
             # ========== DiT Mode: AdaLN ==========
             self.blocks = nn.ModuleList(
                 [DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)]
             )
-            
+
             # Condition encoders
             self.time_proj = nn.Sequential(
                 nn.Linear(hidden_size, hidden_size),
@@ -299,8 +330,19 @@ class SmolVLMActionTransformer(nn.Module):
             )
             # VLM pooling projection (no aux_visual needed)
             self.vlm_cond_proj = nn.Linear(vlm_hidden_size, hidden_size)
-            # Proprio projection
-            self.proprio_proj = nn.Linear(dim_propio, hidden_size)
+            # Proprio conditioning: GRU（K>1）或线性映射（K=1）
+            # 参考 Diffusion Policy (arxiv:2303.04137) 的 observation horizon
+            if proprio_history_len > 1:
+                self.proprio_gru = nn.GRU(
+                    input_size=dim_propio,
+                    hidden_size=hidden_size,
+                    num_layers=1,
+                    batch_first=True,
+                )
+                self.proprio_proj = None  # GRU 替代线性映射
+            else:
+                self.proprio_proj = nn.Linear(dim_propio, hidden_size)
+                self.proprio_gru = None
             
             # Action encoder
             self.action_encoder = nn.Linear(dim_action, hidden_size)
@@ -353,7 +395,9 @@ class SmolVLMActionTransformer(nn.Module):
         -------
         Tensor: Predicted velocity, [B, T_action, dim_action]
         """
-        if self.use_adaln:
+        if self.use_adaln_hybrid:
+            return self._forward_hybrid(vlm_features, action_with_noise, proprio, t)
+        elif self.use_adaln:
             return self._forward_adaln(vlm_features, action_with_noise, proprio, t)
         else:
             return self._forward_concat(vlm_features, action_with_noise, proprio, t)
@@ -374,6 +418,9 @@ class SmolVLMActionTransformer(nn.Module):
         B, num_actions = action_with_noise.shape[:2]
 
         # Encode (action + proprio + time) → tokens
+        # Concat 模式只用最新帧 proprio（K>1 时取最后一帧，向后兼容）
+        if proprio.dim() == 3:
+            proprio = proprio[:, -1, :]  # [B, K, D] → [B, D]
         time_emb = timestep_embedding(t, self.dim_time)
         time_tokens = time_emb.unsqueeze(1).expand(B, num_actions, self.dim_time)
         proprio_tokens = proprio.unsqueeze(1).expand(B, num_actions, proprio.shape[-1])
@@ -422,9 +469,18 @@ class SmolVLMActionTransformer(nn.Module):
         # VLM condition: Global Average Pooling
         vlm_cond = self.vlm_cond_proj(vlm_features.mean(dim=1))  # [B, H]
         
-        # Proprio condition
-        proprio_cond = self.proprio_proj(proprio)  # [B, H]
-        
+        # Proprio condition：GRU 历史编码（K>1）或单帧线性映射（K=1）
+        if self.proprio_gru is not None:
+            # proprio: [B, K, dim_proprio] 或 [B, dim_proprio]（自动 unsqueeze）
+            if proprio.dim() == 2:
+                proprio = proprio.unsqueeze(1)  # [B, 1, D]
+            _, h_n = self.proprio_gru(proprio)  # h_n: [1, B, H]
+            proprio_cond = h_n.squeeze(0)       # [B, H]
+        else:
+            if proprio.dim() == 3:
+                proprio = proprio[:, -1, :]     # 仅用最新帧，兼容历史输入
+            proprio_cond = self.proprio_proj(proprio)  # [B, H]
+
         # Fuse all conditions
         c = t_emb + vlm_cond + proprio_cond  # [B, H]
         
@@ -440,6 +496,59 @@ class SmolVLMActionTransformer(nn.Module):
         
         # ========== 4. Final Layer with AdaLN ==========
         return self.final_layer(x, c)
+
+    def _forward_hybrid(
+        self,
+        vlm_features: torch.Tensor,
+        action_with_noise: torch.Tensor,
+        proprio: torch.Tensor,
+        t: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        混合模式 Forward：AdaLN（time+proprio）+ Concat（VLM token 保留在序列里）。
+
+        参考论文：
+          - DiT (arxiv:2212.09748): AdaLN-zero 为最优条件注入方式
+          - π0 (arxiv:2410.24164): action expert 使用 AdaLN
+        设计思路：
+          - 低维全局信号（时间 t、本体感知 proprio）→ AdaLN 注入（计算高效、全局一致）
+          - 高维空间信号（VLM 图像 token）→ Concat 拼接（保留位置/细节信息）
+        """
+        B, num_actions = action_with_noise.shape[:2]
+
+        # ===== 1. 全局条件 c = time + proprio（不包含 VLM GAP）=====
+        t_emb = timestep_embedding(t, self.hidden_size)
+        t_emb = self.time_proj(t_emb)                     # [B, H]
+
+        if self.proprio_gru is not None:
+            if proprio.dim() == 2:
+                proprio = proprio.unsqueeze(1)
+            _, h_n = self.proprio_gru(proprio)
+            proprio_cond = h_n.squeeze(0)
+        else:
+            if proprio.dim() == 3:
+                proprio = proprio[:, -1, :]
+            proprio_cond = self.proprio_proj(proprio)     # [B, H]
+
+        c = t_emb + proprio_cond                          # [B, H]（无 VLM GAP，保留细节）
+
+        # ===== 2. 构建输入序列：action token + VLM image token =====
+        x_action = self.action_encoder(action_with_noise)          # [B, T_action, H]
+        x_vlm    = self.vlm_proj(vlm_features)                     # [B, T_vlm, H]
+        x = torch.cat([x_action, x_vlm], dim=1)                    # [B, T_action+T_vlm, H]
+
+        seq_len = x.shape[1]
+        if seq_len > self.pos_emb.shape[1]:
+            raise ValueError(f"序列长度 {seq_len} 超过 max_len_seq={self.pos_emb.shape[1]}")
+        x = x + self.pos_emb[:, :seq_len, :]
+
+        # ===== 3. DiTBlock（AdaLN 注入 c，序列包含 VLM token）=====
+        for block in self.blocks:
+            x = block(x, c)
+
+        # ===== 4. 只解码 action 段 =====
+        x_out = x[:, :num_actions, :]                              # [B, T_action, H]
+        return self.final_layer(x_out, c)
 
 
 __all__ = [

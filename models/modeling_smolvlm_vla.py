@@ -97,12 +97,29 @@ class SmolVLMVLA(PreTrainedModel):
             dim_time=config.dim_time,
             max_len_seq=config.max_len_seq,
             use_adaln=self.use_adaln,
+            proprio_history_len=getattr(config, "proprio_history_len", 1),
+            use_adaln_hybrid=getattr(config, "use_adaln_hybrid", False),
         )
         
         if self.use_adaln:
             logging.info("✓ DiT/AdaLN mode enabled: conditions injected via Adaptive Layer Norm")
         else:
             logging.info("✓ Concat mode enabled: conditions concatenated to sequence")
+
+        # 辅助运动预测头（Joint Motion Image Diffusion, arxiv:2512.18007）
+        # 从 VLM 特征预测全局运动向量（per-view mean flow）作为辅助监督
+        # 推理时不使用，不增加延迟
+        self.motion_head = None
+        self.motion_loss_weight = getattr(config, "motion_loss_weight", 0.1)
+        if getattr(config, "use_motion_head", False):
+            # 输出维度：num_views × 2（每视角 x/y 均值光流）
+            motion_out_dim = getattr(config, "motion_out_dim", self.num_views * 2)
+            self.motion_head = nn.Sequential(
+                nn.Linear(vlm_hidden_size, vlm_hidden_size),
+                nn.SiLU(),
+                nn.Linear(vlm_hidden_size, motion_out_dim),
+            )
+            logging.info(f"✓ Motion Head enabled: out_dim={motion_out_dim}, loss_weight={self.motion_loss_weight}")
 
         # Dual-stream fusion（可选）
         self.dual_stream_fusion = None
@@ -113,6 +130,7 @@ class SmolVLMVLA(PreTrainedModel):
             self.dual_stream_fusion = DualStreamFusion(
                 hidden_size=vlm_hidden,
                 fusion_type=config.dual_stream_fusion,
+                use_missing_token=getattr(config, "use_missing_token", False),
             )
             logging.info(f"[SmolVLMVLA] Dual-stream fusion enabled: {config.dual_stream_fusion}, hidden_size={vlm_hidden}")
 
@@ -342,13 +360,18 @@ class SmolVLMVLA(PreTrainedModel):
         input_ids: torch.LongTensor,        # [B, L] - tokenized language instruction
         image_input: torch.FloatTensor,     # [B, V, C, H, W]
         image_mask: torch.Tensor,           # [B, V]
-        proprio: torch.Tensor,              # [B, dim_proprio]
+        proprio: torch.Tensor,              # [B, dim_proprio] 或 [B, K, dim_proprio]
         action: torch.Tensor,               # [B, T=num_actions, D=dim_action]
+        motion_target: torch.Tensor | None = None,  # [B, num_views*2]，可选光流监督
     ) -> Dict[str, torch.Tensor]:
         """
         Flow Matching training.
-        
-        1) Time sampling: t ~ Beta(1.5, 1) * 0.999 + 0.001
+
+        时间采样策略（由 config.time_sampling 控制）：
+          - "logit_normal": t = sigmoid(N(mean, std²))，来自 SD3 (arxiv:2403.03206)
+          - "beta": t ~ Beta(1.5, 1) * 0.999 + 0.001（旧行为，兼容旧 checkpoint）
+
+        1) Time sampling: 按上述策略采样 t
         2) Interpolation: x_t = t * noise + (1-t) * actions
         3) Target: velocity u_t = noise - actions
         4) Model predicts v_t, compute MSE(v_t, u_t)
@@ -366,12 +389,22 @@ class SmolVLMVLA(PreTrainedModel):
         B = input_ids.shape[0]
         device = input_ids.device
 
-        # Beta(1.5, 1) time sampling
-        beta_dist = torch.distributions.Beta(
-            torch.tensor(1.5, device=device), 
-            torch.tensor(1.0, device=device)
-        )
-        t = beta_dist.sample((B,)) * 0.999 + 0.001
+        # Time sampling（SD3 logit-normal 默认，兼容旧 beta 模式）
+        time_sampling = getattr(self.config, "time_sampling", "logit_normal")
+        if time_sampling == "logit_normal":
+            mean = getattr(self.config, "logit_normal_mean", 0.0)
+            std  = getattr(self.config, "logit_normal_std",  1.0)
+            z = torch.randn(B, device=device) * std + mean
+            t = torch.sigmoid(z)
+            # 夹到 [0.001, 0.999] 避免数值极端
+            t = t.clamp(0.001, 0.999)
+        else:
+            # 旧 Beta(1.5, 1) 行为，兼容旧 checkpoint
+            beta_dist = torch.distributions.Beta(
+                torch.tensor(1.5, device=device),
+                torch.tensor(1.0, device=device)
+            )
+            t = beta_dist.sample((B,)) * 0.999 + 0.001
 
         # Normalize action and proprio
         if hasattr(self.action_space, 'normalize_action'):
@@ -404,8 +437,20 @@ class SmolVLMVLA(PreTrainedModel):
         
         # MSE loss
         velocity_loss = torch.mean(torch.square(v_t - u_t))
-        
-        return {"velocity_loss": velocity_loss}
+
+        losses = {"velocity_loss": velocity_loss}
+
+        # 辅助运动预测损失（arxiv:2512.18007）
+        # 在有 motion_target 且 motion_head 存在时计算；推理时跳过
+        if self.motion_head is not None and motion_target is not None:
+            # VLM 特征全局池化后预测运动向量
+            vlm_pool = enc["vlm_features"].mean(dim=1)  # [B, D_vlm]
+            motion_pred = self.motion_head(vlm_pool)    # [B, num_views*2]
+            motion_loss = torch.mean(torch.square(motion_pred - motion_target.to(motion_pred.dtype)))
+            losses["motion_loss"] = motion_loss
+            losses["velocity_loss"] = velocity_loss + self.motion_loss_weight * motion_loss
+
+        return losses
 
     # ================================= inference =================================
     @torch.no_grad()

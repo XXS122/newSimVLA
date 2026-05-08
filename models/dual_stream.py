@@ -96,6 +96,7 @@ class DualStreamFusion(nn.Module):
         num_patches_per_view: int = 64,
         static_view_indices: list[int] | None = None,
         dynamic_view_indices: list[int] | None = None,
+        use_missing_token: bool = False,
     ) -> None:
         super().__init__()
         self.fusion_type = fusion_type
@@ -112,6 +113,13 @@ class DualStreamFusion(nn.Module):
             self.cross_attn = CrossAttentionFusion(hidden_size, num_heads=8)
         else:
             raise ValueError(f"Unknown fusion_type: {fusion_type}. Choose from add/concat_linear/cross_attn")
+
+        # 可学习缺失视角 token（参考 MAE arxiv:2111.06377）
+        # 零初始化 → 训练初期等效原零填充，梯度驱动后逐步激活
+        if use_missing_token:
+            self.missing_token = nn.Parameter(torch.zeros(1, hidden_size))
+        else:
+            self.missing_token = None
 
     def _get_stream_indices(self, n_valid: int) -> tuple[list[int], list[int]]:
         """根据有效视角数返回 (s_idx, d_idx)。"""
@@ -156,10 +164,17 @@ class DualStreamFusion(nn.Module):
         max_s = max(t.shape[0] for t in static_parts)
         max_d = max(t.shape[0] for t in dynamic_parts)
 
-        static_padded = torch.zeros(B, max_s, D, device=vlm_features.device, dtype=vlm_features.dtype)
-        dynamic_padded = torch.zeros(B, max_d, D, device=vlm_features.device, dtype=vlm_features.dtype)
+        # 缺失视角处：用可学习 missing_token 填充（若未启用则退回零填充）
+        # 参考 MAE (arxiv:2111.06377) 的 mask token 思路
+        if self.missing_token is not None:
+            pad_vec = self.missing_token.to(dtype=vlm_features.dtype)  # [1, D]
+            static_padded  = pad_vec.expand(B, max_s, D).clone()
+            dynamic_padded = pad_vec.expand(B, max_d, D).clone()
+        else:
+            static_padded  = torch.zeros(B, max_s, D, device=vlm_features.device, dtype=vlm_features.dtype)
+            dynamic_padded = torch.zeros(B, max_d, D, device=vlm_features.device, dtype=vlm_features.dtype)
         for b in range(B):
-            static_padded[b, :static_parts[b].shape[0]] = static_parts[b]
+            static_padded[b, :static_parts[b].shape[0]]  = static_parts[b]
             dynamic_padded[b, :dynamic_parts[b].shape[0]] = dynamic_parts[b]
 
         if self.fusion_type == "add":

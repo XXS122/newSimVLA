@@ -46,6 +46,9 @@ class SmolVLMVLAConfig(PretrainedConfig):
         
         # === DiT/AdaLN Mode ===
         use_adaln: bool = False,
+        # 混合模式：AdaLN 注入 time+proprio，VLM token 保留在 Concat 序列里
+        # 参考 DiT (arxiv:2212.09748) + π0 (arxiv:2410.24164)
+        use_adaln_hybrid: bool = False,
 
         # === Dual-Stream Multi-View Fusion ===
         use_dual_stream: bool = False,
@@ -54,6 +57,29 @@ class SmolVLMVLAConfig(PretrainedConfig):
         # === Image settings ===
         image_size: int = 384,  # Can be 384 or 512
         num_views: int = 3,  # Number of camera views
+
+        # === 辅助运动预测头（Joint Motion Image Diffusion, arxiv:2512.18007）===
+        # 从 VLM 特征预测每视角全局光流向量，作为辅助监督（推理时不用）
+        use_motion_head: bool = False,
+        motion_out_dim: int = 6,         # num_views × 2（默认 3 视角×2方向=6）
+        motion_loss_weight: float = 0.1, # 辅助损失权重 λ
+
+        # === Flow Matching time sampling (SD3 arxiv:2403.03206) ===
+        # "logit_normal": t = sigmoid(N(mean, std²))，集中在 t=0.5 附近
+        # "beta": 原 Beta(1.5,1) 采样（兼容旧 checkpoint）
+        time_sampling: str = "logit_normal",
+        logit_normal_mean: float = 0.0,
+        logit_normal_std: float = 1.0,
+
+        # === View Dropout + Learned Missing Token ===
+        # 训练时随机丢弃视角，让模型对缺失视角鲁棒
+        use_view_dropout: bool = False,
+        view_dropout_prob: float = 0.1,   # 每个视角被 dropout 的概率
+        use_missing_token: bool = False,  # 用可学习 token 替代零填充
+
+        # === Proprio 历史窗口（Diffusion Policy arxiv:2303.04137）===
+        # K=1: 无历史（原行为）；K>1: 使用 GRU 编码 K 帧历史
+        proprio_history_len: int = 1,
 
         **kwargs,
     ):
@@ -75,6 +101,7 @@ class SmolVLMVLAConfig(PretrainedConfig):
         
         # DiT/AdaLN settings
         self.use_adaln = use_adaln
+        self.use_adaln_hybrid = use_adaln_hybrid
 
         # Dual-Stream Multi-View Fusion settings
         self.use_dual_stream = use_dual_stream
@@ -83,6 +110,24 @@ class SmolVLMVLAConfig(PretrainedConfig):
         # Image settings
         self.image_size = image_size
         self.num_views = num_views
+
+        # 辅助运动预测头
+        self.use_motion_head = use_motion_head
+        self.motion_out_dim = motion_out_dim
+        self.motion_loss_weight = motion_loss_weight
+
+        # Flow Matching time sampling
+        self.time_sampling = time_sampling
+        self.logit_normal_mean = logit_normal_mean
+        self.logit_normal_std = logit_normal_std
+
+        # View Dropout + Missing Token
+        self.use_view_dropout = use_view_dropout
+        self.view_dropout_prob = view_dropout_prob
+        self.use_missing_token = use_missing_token
+
+        # Proprio 历史窗口
+        self.proprio_history_len = proprio_history_len
 
         # Initialize base HF config attributes
         super().__init__(**kwargs)
