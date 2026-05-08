@@ -28,6 +28,9 @@ class VLABenchRLDSHandler(DomainHandler):
         super().__init__(meta, num_views)
         self.data_dir = meta.get("data_dir", "")
         self.shard_files: List[str] = meta.get("datalist", [])
+        # 帧步长：相邻采样起始帧之间的间隔，减少冗余近似帧
+        # 默认 1（原行为），推荐 VLABench 设为 3
+        self.frame_stride: int = int(meta.get("frame_stride", 1))
 
     def iter_episode(
         self,
@@ -98,7 +101,8 @@ class VLABenchRLDSHandler(DomainHandler):
 
         image_mask = torch.ones(self.num_views, dtype=torch.bool)
 
-        indices = list(range(max(0, T - num_actions)))
+        # frame_stride：仅采样每隔 stride 帧的起始位置，避免相邻帧动作幅度过小
+        indices = list(range(0, max(0, T - num_actions), self.frame_stride))
         if training:
             random.shuffle(indices)
 
