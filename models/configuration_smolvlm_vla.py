@@ -81,6 +81,14 @@ class SmolVLMVLAConfig(PretrainedConfig):
         # K=1: 无历史（原行为）；K>1: 使用 GRU 编码 K 帧历史
         proprio_history_len: int = 1,
 
+        # === ActionVAE 隐式扩散策略（RoLD arxiv:2403.07312）===
+        # 将动作块 [B,T,D_a] 编码至紧凑隐空间 z [B,d_z]，在隐空间做 flow matching
+        # 推理时：Euler 积分得到 z，再解码为动作序列
+        use_action_vae: bool = False,
+        latent_dim: int = 32,           # d_z：隐变量维度
+        vae_beta: float = 0.001,        # β-VAE KL 散度权重
+        vae_recon_weight: float = 1.0,  # 重建损失权重
+
         **kwargs,
     ):
         # SmolVLM backbone path
@@ -128,6 +136,12 @@ class SmolVLMVLAConfig(PretrainedConfig):
 
         # Proprio 历史窗口
         self.proprio_history_len = proprio_history_len
+
+        # ActionVAE 隐式扩散策略
+        self.use_action_vae = use_action_vae
+        self.latent_dim = latent_dim
+        self.vae_beta = vae_beta
+        self.vae_recon_weight = vae_recon_weight
 
         # Initialize base HF config attributes
         super().__init__(**kwargs)

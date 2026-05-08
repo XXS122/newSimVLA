@@ -19,6 +19,7 @@ from typing import Any, Dict
 
 import numpy as np
 import torch
+import torch.nn as nn
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from PIL import Image
@@ -84,27 +85,53 @@ class SmolVLMVLA(PreTrainedModel):
 
         # DiT/AdaLN mode setting
         self.use_adaln = getattr(config, 'use_adaln', False)
-        
-        # Flow matching action head (SmolVLM version - no aux_visual)
-        self.transformer = SmolVLMActionTransformer(
-            hidden_size=config.hidden_size,
-            vlm_hidden_size=vlm_hidden_size,
-            depth=config.depth,
-            num_heads=config.num_heads,
-            mlp_ratio=config.mlp_ratio,
-            dim_action=dim_action,
-            dim_propio=dim_proprio,
-            dim_time=config.dim_time,
-            max_len_seq=config.max_len_seq,
-            use_adaln=self.use_adaln,
-            proprio_history_len=getattr(config, "proprio_history_len", 1),
-            use_adaln_hybrid=getattr(config, "use_adaln_hybrid", False),
-        )
-        
-        if self.use_adaln:
-            logging.info("✓ DiT/AdaLN mode enabled: conditions injected via Adaptive Layer Norm")
+
+        # === ActionVAE Latent Diffusion Policy (RoLD arxiv:2403.07312) ===
+        self.use_action_vae = getattr(config, "use_action_vae", False)
+        self.action_vae = None
+        self.latent_flow_net = None
+
+        if self.use_action_vae:
+            from .action_vae import ActionVAE, LatentFlowNet
+            latent_dim = getattr(config, "latent_dim", 32)
+            self.action_vae = ActionVAE(
+                dim_action=dim_action,
+                seq_len=config.num_actions,
+                vlm_hidden=vlm_hidden_size,
+                latent_dim=latent_dim,
+            )
+            self.latent_flow_net = LatentFlowNet(
+                latent_dim=latent_dim,
+                vlm_hidden=vlm_hidden_size,
+                dim_proprio=dim_proprio,
+            )
+            self.vae_beta = getattr(config, "vae_beta", 0.001)
+            self.vae_recon_weight = getattr(config, "vae_recon_weight", 1.0)
+            self.transformer = None
+            logging.info(
+                f"✓ ActionVAE Latent Diffusion: latent_dim={latent_dim}, "
+                f"β={self.vae_beta}, recon_w={self.vae_recon_weight}"
+            )
         else:
-            logging.info("✓ Concat mode enabled: conditions concatenated to sequence")
+            # Flow matching action head (standard action-space mode)
+            self.transformer = SmolVLMActionTransformer(
+                hidden_size=config.hidden_size,
+                vlm_hidden_size=vlm_hidden_size,
+                depth=config.depth,
+                num_heads=config.num_heads,
+                mlp_ratio=config.mlp_ratio,
+                dim_action=dim_action,
+                dim_propio=dim_proprio,
+                dim_time=config.dim_time,
+                max_len_seq=config.max_len_seq,
+                use_adaln=self.use_adaln,
+                proprio_history_len=getattr(config, "proprio_history_len", 1),
+                use_adaln_hybrid=getattr(config, "use_adaln_hybrid", False),
+            )
+            if self.use_adaln:
+                logging.info("✓ DiT/AdaLN mode enabled: conditions injected via Adaptive Layer Norm")
+            else:
+                logging.info("✓ Concat mode enabled: conditions concatenated to sequence")
 
         # 辅助运动预测头（Joint Motion Image Diffusion, arxiv:2512.18007）
         # 从 VLM 特征预测全局运动向量（per-view mean flow）作为辅助监督
@@ -421,31 +448,57 @@ class SmolVLMVLA(PreTrainedModel):
         else:
             proprio_norm = proprio
         
-        # Flow Matching
+        if self.use_action_vae:
+            # ─── ActionVAE 隐式扩散策略（RoLD arxiv:2403.07312）───
+            # 1. 将动作块编码至隐空间
+            z, mu, log_var, recon = self.action_vae(action_norm, enc["vlm_features"])
+
+            # 2. 重建损失（隐解码器监督）
+            recon_loss = torch.mean(torch.square(recon - action_norm))
+
+            # 3. KL 散度（β-VAE 正则）：-0.5 * E[1 + log σ² - μ² - σ²]
+            kl_loss = -0.5 * torch.mean(1.0 + log_var - mu.pow(2) - log_var.exp())
+
+            # 4. 隐空间 Flow Matching：在 z [B,d_z] 上做 rectified flow
+            noise_z = torch.randn_like(z)
+            t_1d = t.unsqueeze(-1)                              # [B, 1]
+            z_t = t_1d * noise_z + (1 - t_1d) * z             # [B, d_z]
+            u_z = noise_z - z                                   # target velocity
+
+            v_z = self.latent_flow_net(z_t, t, enc["vlm_features"], proprio_norm)
+            fm_loss = torch.mean(torch.square(v_z - u_z))
+
+            # 5. 总损失
+            total = (fm_loss
+                     + self.vae_recon_weight * recon_loss
+                     + self.vae_beta * kl_loss)
+            return {
+                "velocity_loss": total,
+                "fm_loss": fm_loss,
+                "recon_loss": recon_loss,
+                "kl_loss": kl_loss,
+            }
+
+        # ─── 标准 Flow Matching（动作序列空间）───
         noise = torch.randn_like(action_norm)
         t_expanded = t.view(-1, 1, 1)
         x_t = t_expanded * noise + (1 - t_expanded) * action_norm
         u_t = noise - action_norm
 
-        # Model prediction (no aux_visual_inputs for SmolVLM)
         v_t = self.transformer(
             vlm_features=enc["vlm_features"],
             action_with_noise=x_t,
             t=t,
             proprio=proprio_norm,
         )
-        
-        # MSE loss
-        velocity_loss = torch.mean(torch.square(v_t - u_t))
 
+        velocity_loss = torch.mean(torch.square(v_t - u_t))
         losses = {"velocity_loss": velocity_loss}
 
         # 辅助运动预测损失（arxiv:2512.18007）
-        # 在有 motion_target 且 motion_head 存在时计算；推理时跳过
         if self.motion_head is not None and motion_target is not None:
-            # VLM 特征全局池化后预测运动向量
-            vlm_pool = enc["vlm_features"].mean(dim=1)  # [B, D_vlm]
-            motion_pred = self.motion_head(vlm_pool)    # [B, num_views*2]
+            vlm_pool = enc["vlm_features"].mean(dim=1)
+            motion_pred = self.motion_head(vlm_pool)
             motion_loss = torch.mean(torch.square(motion_pred - motion_target.to(motion_pred.dtype)))
             losses["motion_loss"] = motion_loss
             losses["velocity_loss"] = velocity_loss + self.motion_loss_weight * motion_loss
@@ -495,26 +548,37 @@ class SmolVLMVLA(PreTrainedModel):
         else:
             proprio_norm = proprio
 
-        # Euler integration
         steps = max(1, int(steps))
         dt = -1.0 / steps
-        
+
+        if self.use_action_vae:
+            # ─── ActionVAE 推理：隐空间 Euler 积分 → VAE 解码 ───
+            latent_dim = self.config.latent_dim
+            z_t = torch.randn(B, latent_dim, device=device, dtype=dtype)
+            t = 1.0
+            while t > -dt / 2:
+                t_tensor = torch.full((B,), t, device=device, dtype=dtype)
+                v_z = self.latent_flow_net(z_t, t_tensor, enc["vlm_features"], proprio_norm)
+                z_t = z_t + dt * v_z
+                t = t + dt
+            # 解码 z → 动作序列
+            action = self.action_vae.decode(z_t, enc["vlm_features"])  # [B, T, D_a]
+            return self.action_space.postprocess(action)
+
+        # ─── 标准推理：动作序列空间 Euler 积分 ───
         x_t = torch.randn(B, self.num_actions, D, device=device, dtype=dtype)
         t = 1.0
-        
         while t > -dt / 2:
             t_tensor = torch.full((B,), t, device=device, dtype=dtype)
-            
             v_t = self.transformer(
                 vlm_features=enc["vlm_features"],
                 action_with_noise=x_t,
                 proprio=proprio_norm,
                 t=t_tensor,
             )
-        
             x_t = x_t + dt * v_t
             t = t + dt
-        
+
         return self.action_space.postprocess(x_t)
 
     # =============================== FastAPI service =============================

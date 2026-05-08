@@ -194,6 +194,16 @@ def get_args_parser():
     parser.add_argument("--motion_loss_weight", type=float, default=0.1,
                         help="辅助运动损失权重 λ（默认 0.1）")
 
+    # === ActionVAE 隐式扩散策略（RoLD arxiv:2403.07312）===
+    parser.add_argument("--use_action_vae", action="store_true", default=False,
+                        help="启用 ActionVAE：在隐空间做 flow matching（替代直接动作序列预测）")
+    parser.add_argument("--latent_dim", type=int, default=32,
+                        help="ActionVAE 隐空间维度 d_z（默认 32）")
+    parser.add_argument("--vae_beta", type=float, default=0.001,
+                        help="β-VAE KL 散度权重（默认 0.001）")
+    parser.add_argument("--vae_recon_weight", type=float, default=1.0,
+                        help="VAE 重建损失权重（默认 1.0）")
+
     return parser
 
 
@@ -210,16 +220,29 @@ def set_seed(seed: int):
 def build_optimizer(model: SmolVLMVLA, lr: float, weight_decay: float, betas=(0.9, 0.95), lr_coef_vlm=1.0):
     """Build optimizer with separate param groups."""
     vlm_params = list(model.vlm.parameters())
-    
-    # Get action output params based on mode
-    if hasattr(model.transformer, 'final_layer'):
-        action_params = list(model.transformer.final_layer.parameters()) + list(model.transformer.action_encoder.parameters())
+
+    # Action head params depend on whether we use ActionVAE or standard transformer
+    if getattr(model, "use_action_vae", False) and model.latent_flow_net is not None:
+        # ActionVAE: output layers of latent flow net + VAE encoder head + VAE decoder head
+        action_params = (
+            list(model.latent_flow_net.output.parameters())
+            + list(model.latent_flow_net.input_proj.parameters())
+            + list(model.action_vae.to_mu_logvar.parameters())
+            + list(model.action_vae.action_out.parameters())
+        )
+    elif model.transformer is not None:
+        if hasattr(model.transformer, 'final_layer'):
+            action_params = (list(model.transformer.final_layer.parameters())
+                             + list(model.transformer.action_encoder.parameters()))
+        else:
+            action_params = (list(model.transformer.action_decoder.parameters())
+                             + list(model.transformer.action_encoder.parameters()))
     else:
-        action_params = list(model.transformer.action_decoder.parameters()) + list(model.transformer.action_encoder.parameters())
-    
+        action_params = []
+
     exclude = set(map(id, vlm_params + action_params))
     transformer_core_params = [p for p in model.parameters() if id(p) not in exclude]
-    
+
     param_groups = [
         {"name": "vlm", "params": vlm_params, "lr": 0.0, "weight_decay": weight_decay},
         {"name": "transformer_core", "params": transformer_core_params, "lr": 0.0, "weight_decay": weight_decay},
@@ -396,6 +419,10 @@ def main(args):
             use_motion_head=args.use_motion_head,
             motion_out_dim=args.motion_out_dim,
             motion_loss_weight=args.motion_loss_weight,
+            use_action_vae=args.use_action_vae,
+            latent_dim=args.latent_dim,
+            vae_beta=args.vae_beta,
+            vae_recon_weight=args.vae_recon_weight,
         )
         model = SmolVLMVLA(config)
         
