@@ -64,7 +64,6 @@ SimVLA（arXiv:2602.18224）的核心设计：
 |---|---|---|---|
 | 多视角融合 | 单流 Concat 进 SmolVLM | **双流跨注意力融合** | ★★★ 主要 |
 | 动作空间 | 直接在 [B,T,D_a] 做 FM | **隐空间 ActionVAE + FM** | ★★★ 主要 |
-| 辅助监督 | 无 | **光流向量辅助预测头** | ★★★ 主要 |
 | 条件注入方式 | 纯 Concat | **AdaLN + Concat 混合** | ★★★ 主要 |
 | 时间采样 | Beta(1.5, 1) | **Logit-Normal（SD3）** | ★★ 次要 |
 | 本体感知 | 单帧 proprio | **K 帧历史 + GRU 编码** | ★★ 次要 |
@@ -174,29 +173,7 @@ $$\mathcal{L} = \underbrace{\mathbb{E}\!\left[\|v_z - (\varepsilon_z - z)\|^2\ri
 
 ---
 
-### 4.3 辅助运动预测头（Auxiliary Motion Prediction Head）
-
-**问题**：SimVLA 仅用 velocity MSE 监督 VLM 特征，VLM 不被要求理解"当前帧到下一帧的运动方向"，导致 VLM 特征缺乏运动语义。
-
-**方法（启发自 arXiv:2512.18007）**：在 VLM 特征上新增轻量 2 层 MLP，预测**每视角全局光流向量**作为辅助监督，推理时删去此头，**零推理开销**。
-
-**与原论文的区别**：原论文（π0，PaliGemma 3B）预测完整**光流图**（H×W×2 空间分辨率），标签计算和存储成本极高。我们简化为预测**全图均值光流**（per-view mean flow），每视角 2 维，V 视角共 2V = 8 维。
-
-**数学表达**
-
-$$\bar{F} = \frac{1}{L}\sum_{l=1}^{L} F_\text{vlm}[:,l,:] \in \mathbb{R}^{B \times D_v}$$
-
-$$\hat{m} = W_2 \cdot \text{SiLU}(W_1 \cdot \bar{F}) \in \mathbb{R}^{B \times 2V}$$
-
-$$\mathcal{L}_\text{motion} = \mathbb{E}\!\left[\|\hat{m} - m^*\|^2\right]$$
-
-$$\mathcal{L}_\text{total} = \mathcal{L}_\text{velocity} + \lambda_m \cdot \mathcal{L}_\text{motion}, \quad \lambda_m = 0.1$$
-
-光流标签 m* 离线用 `cv2.calcOpticalFlowFarneback(frame_t, frame_{t+1})` 计算后取全图均值。
-
----
-
-### 4.4 AdaLN + Concat 混合条件注入（Hybrid Conditioning）
+### 4.3 AdaLN + Concat 混合条件注入（Hybrid Conditioning）
 
 **问题**：SimVLA 只有单一 Concat 模式，将 VLM 特征、时间 t、proprio 全部拼入 action token 序列，存在两个缺陷：
 - 序列长度膨胀（L ≫ T），Self-Attention 计算量增大
@@ -351,10 +328,7 @@ Step 4B  ActionVAE 模式（use_action_vae=True）
     v_z = LatentFlowNet(z_t, t, F_fused, p_norm)
     L_FM = MSE(v_z, ε_z - z)
 
-  [辅助损失（可选）]
-    motion_pred = MLP(mean_l(F_fused))  → [B, 2V]
-    L_motion = MSE(motion_pred, m*)
-    L_total = L_FM + λ_r·L_recon + β·L_KL + λ_m·L_motion
+  L_total = L_FM + λ_r·L_recon + β·L_KL
 ```
 
 ---
@@ -363,17 +337,16 @@ Step 4B  ActionVAE 模式（use_action_vae=True）
 
 **标准模式**：
 
-$$\mathcal{L} = \mathbb{E}_{t,\varepsilon}\!\left[\sum_d w_d(v_d - u_d)^2\right] + \lambda_m \cdot \mathcal{L}_\text{motion}$$
+$$\mathcal{L} = \mathbb{E}_{t,\varepsilon}\!\left[\sum_d w_d(v_d - u_d)^2\right]$$
 
 **ActionVAE 模式**：
 
-$$\mathcal{L} = \mathcal{L}_\text{FM}(z) + \lambda_r \cdot \mathcal{L}_\text{recon} + \beta \cdot \mathcal{L}_\text{KL} + \lambda_m \cdot \mathcal{L}_\text{motion}$$
+$$\mathcal{L} = \mathcal{L}_\text{FM}(z) + \lambda_r \cdot \mathcal{L}_\text{recon} + \beta \cdot \mathcal{L}_\text{KL}$$
 
 | 超参数 | 含义 | 值 |
 |---|---|---|
 | λ_r | VAE 重建损失权重 | 1.0 |
 | β | KL 散度权重（β-VAE） | 0.001 |
-| λ_m | 运动辅助损失权重 | 0.1 |
 | w_g | gripper 损失加权 | 2.0 |
 
 ---
@@ -463,26 +436,17 @@ for step in 1..S (S=10):
         │                                       │
         └──────────────┬────────────────────────┘
                        ↓
-第四列（输出与辅助头）
+第四列（输出）
 ┌─────────────────────────────────┐
 │  动作后处理                      │
 │  反归一化 + gripper 二值化       │
 │  输出 â [B, T=30, D_a=7]        │
 └─────────────────────────────────┘
-
-旁边单独一个小框（虚线，表示仅训练时使用）：
-┌───────────────────────────┐
-│ ③ 运动预测头（灰色虚线框）  │
-│  F_fused → GAP → MLP      │
-│  → 光流向量 [B, 2×4=8]    │
-│  （推理时删除，零推理开销） │
-└───────────────────────────┘
 ```
 
 **图注说明**：
 - 实线框 = 从 SimVLA 继承的模块
-- **彩色实线框** = 本工作新增/改动的模块（用不同颜色区分 ①②③）
-- 虚线框 = 仅训练时使用的辅助模块
+- **彩色实线框** = 本工作新增/改动的模块（橙色=双流融合，绿色=GRU，紫色=ActionVAE）
 - F_vlm / F_fused 等变量标注在箭头上
 
 ---
@@ -491,34 +455,25 @@ for step in 1..S (S=10):
 
 动机图用于解释"为什么需要这些改进"，建议做成 **2×2 的格子图** 或 **问题-方案对比图**，每格包含：左侧问题描述（可能配性能曲线/示意图），右侧解决方案。
 
-**推荐布局：2 行 × 2 列**
+**推荐布局：1 行 × 3 列**（对应三个主要创新点）
 
 ```
-┌───────────────────────────┬───────────────────────────┐
-│ 问题①：单流视角融合信息丢失  │ 问题②：动作空间维度过高     │
-│                            │                            │
-│ [示意图：4条视角特征流合并  │ [示意图：动作序列 [T×D_a]  │
-│  后进入LM，wrist信息被稀释] │  与隐向量 d_z 维度对比     │
-│         ↓                  │         ↓                  │
-│ 解决：双流融合              │ 解决：ActionVAE 隐空间 FM  │
-│ Static ⇄ CrossAttn ⇄ Wrist │ a[210维] → z[32维] → FM   │
-├───────────────────────────┼───────────────────────────┤
-│ 问题③：VLM 不理解运动方向  │ 问题④：条件注入方式不匹配   │
-│                            │                            │
-│ [示意图：VLM 特征空间无运  │ [对比图：三种注入方式的     │
-│  动语义；光流可视化示例]    │  计算量 vs 空间细节保留]    │
-│         ↓                  │         ↓                  │
-│ 解决：Motion Head 辅助监督  │ 解决：AdaLN+Concat Hybrid │
-│ VLM Pool → MLP → 光流向量  │ t/p → AdaLN; VLM → Concat │
-└───────────────────────────┴───────────────────────────┘
+┌──────────────────────┬──────────────────────┬──────────────────────┐
+│ 问题①：单流视角信息丢失│ 问题②：动作空间维度高 │ 问题③：条件注入不匹配 │
+│                      │                      │                      │
+│ [4条视角特征流合并后  │ [动作序列 T×D_a=210维 │ [三种注入方式示意：   │
+│  进入LM，wrist被稀释] │  vs 隐向量 d_z=32维]  │  序列长度/细节对比]  │
+│          ↓           │          ↓           │          ↓           │
+│  解决：双流融合        │  解决：ActionVAE      │  解决：AdaLN+Concat  │
+│  Static ⇄ Wrist      │  a[210维]→z[32维]→FM  │  Hybrid 混合模式     │
+└──────────────────────┴──────────────────────┴──────────────────────┘
 ```
 
 **各格配图建议**：
 
-- **格①（双流融合）**：画 Attention 热力图对比——单流时 wrist 视角特征的 attention 权重极低，双流融合后 wrist attention 显著激活
-- **格②（ActionVAE）**：画 loss curve 对比——隐空间 FM（d_z=32）比直接动作空间 FM（210维）收敛更快；或用 t-SNE 可视化隐空间的语义聚类
-- **格③（Motion Head）**：展示两帧图像之间的光流向量（箭头可视化），以及有/无 Motion Head 时 VLM 特征的 PCA 分布差异
-- **格④（Hybrid Conditioning）**：画 3 列柱状图——Concat / AdaLN / Hybrid 在序列长度（计算量代理指标）和下游任务成功率的对比
+- **格①（双流融合）**：Attention 热力图对比——单流时 wrist 视角特征权重极低，双流后 wrist attention 显著激活
+- **格②（ActionVAE）**：Loss curve 对比——隐空间 FM（d_z=32）比直接动作空间 FM（210维）收敛更快；或 t-SNE 可视化隐空间语义聚类
+- **格③（Hybrid Conditioning）**：3 列柱状图——Concat / AdaLN / Hybrid 在序列长度（计算量）和任务成功率的对比
 
 ---
 
@@ -528,7 +483,6 @@ for step in 1..S (S=10):
 |---|---|---|---|---|---|
 | 双流多视角融合 | ★★★ 主要 | — | 本工作原创 | 无对应 | 对 VLM 输出按视角显式分流，wrist 跨注意力融合 |
 | ActionVAE 隐式扩散 | ★★★ 主要 | RoLD | 2403.07312 | CNN DP + VQVAE（离散） | 连续 VAE + FM；decoder 跨注意力 VLM |
-| 辅助运动预测头 | ★★★ 主要 | Joint Motion Diffusion | 2512.18007 | π0（3B）+ 完整光流图 | SmolVLM-500M + 全局光流向量（2V维） |
 | AdaLN+Concat 混合 | ★★★ 主要 | DiT + π0 | 2212.09748 + 2410.24164 | 图像生成 / 纯 AdaLN | 首次混合：AdaLN（t+p）+ Concat（VLM token） |
 | Logit-Normal 采样 | ★★ 次要 | SD3 | 2403.03206 | 图像生成 | 直接迁移至动作 FM |
 | Proprio 历史 GRU | ★★ 次要 | Diffusion Policy | 2303.04137 | 纯视觉扩散 | K=4 帧 GRU 注入 AdaLN 条件 |
