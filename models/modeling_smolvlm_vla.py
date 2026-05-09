@@ -133,21 +133,6 @@ class SmolVLMVLA(PreTrainedModel):
             else:
                 logging.info("✓ Concat mode enabled: conditions concatenated to sequence")
 
-        # 辅助运动预测头（Joint Motion Image Diffusion, arxiv:2512.18007）
-        # 从 VLM 特征预测全局运动向量（per-view mean flow）作为辅助监督
-        # 推理时不使用，不增加延迟
-        self.motion_head = None
-        self.motion_loss_weight = getattr(config, "motion_loss_weight", 0.1)
-        if getattr(config, "use_motion_head", False):
-            # 输出维度：num_views × 2（每视角 x/y 均值光流）
-            motion_out_dim = getattr(config, "motion_out_dim", self.num_views * 2)
-            self.motion_head = nn.Sequential(
-                nn.Linear(vlm_hidden_size, vlm_hidden_size),
-                nn.SiLU(),
-                nn.Linear(vlm_hidden_size, motion_out_dim),
-            )
-            logging.info(f"✓ Motion Head enabled: out_dim={motion_out_dim}, loss_weight={self.motion_loss_weight}")
-
         # Dual-stream fusion（可选）
         self.dual_stream_fusion = None
         if config.use_dual_stream:
@@ -389,7 +374,6 @@ class SmolVLMVLA(PreTrainedModel):
         image_mask: torch.Tensor,           # [B, V]
         proprio: torch.Tensor,              # [B, dim_proprio] 或 [B, K, dim_proprio]
         action: torch.Tensor,               # [B, T=num_actions, D=dim_action]
-        motion_target: torch.Tensor | None = None,  # [B, num_views*2]，可选光流监督
     ) -> Dict[str, torch.Tensor]:
         """
         Flow Matching training.
@@ -492,18 +476,7 @@ class SmolVLMVLA(PreTrainedModel):
             proprio=proprio_norm,
         )
 
-        velocity_loss = torch.mean(torch.square(v_t - u_t))
-        losses = {"velocity_loss": velocity_loss}
-
-        # 辅助运动预测损失（arxiv:2512.18007）
-        if self.motion_head is not None and motion_target is not None:
-            vlm_pool = enc["vlm_features"].mean(dim=1)
-            motion_pred = self.motion_head(vlm_pool)
-            motion_loss = torch.mean(torch.square(motion_pred - motion_target.to(motion_pred.dtype)))
-            losses["motion_loss"] = motion_loss
-            losses["velocity_loss"] = velocity_loss + self.motion_loss_weight * motion_loss
-
-        return losses
+        return {"velocity_loss": torch.mean(torch.square(v_t - u_t))}
 
     # ================================= inference =================================
     @torch.no_grad()

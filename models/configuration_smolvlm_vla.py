@@ -58,12 +58,6 @@ class SmolVLMVLAConfig(PretrainedConfig):
         image_size: int = 384,  # Can be 384 or 512
         num_views: int = 3,  # Number of camera views
 
-        # === 辅助运动预测头（Joint Motion Image Diffusion, arxiv:2512.18007）===
-        # 从 VLM 特征预测每视角全局光流向量，作为辅助监督（推理时不用）
-        use_motion_head: bool = False,
-        motion_out_dim: int = 6,         # num_views × 2（默认 3 视角×2方向=6）
-        motion_loss_weight: float = 0.1, # 辅助损失权重 λ
-
         # === Flow Matching time sampling (SD3 arxiv:2403.03206) ===
         # "logit_normal": t = sigmoid(N(mean, std²))，集中在 t=0.5 附近
         # "beta": 原 Beta(1.5,1) 采样（兼容旧 checkpoint）
@@ -118,11 +112,6 @@ class SmolVLMVLAConfig(PretrainedConfig):
         # Image settings
         self.image_size = image_size
         self.num_views = num_views
-
-        # 辅助运动预测头
-        self.use_motion_head = use_motion_head
-        self.motion_out_dim = motion_out_dim
-        self.motion_loss_weight = motion_loss_weight
 
         # Flow Matching time sampling
         self.time_sampling = time_sampling

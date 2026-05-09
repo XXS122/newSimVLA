@@ -186,14 +186,6 @@ def get_args_parser():
     parser.add_argument("--proprio_history_len", type=int, default=1,
                         help="Proprio 历史帧数（1=无历史，>1 用 GRU 编码历史）")
 
-    # === 辅助运动预测头（Joint Motion Image Diffusion, arxiv:2512.18007）===
-    parser.add_argument("--use_motion_head", action="store_true", default=False,
-                        help="启用辅助运动预测头（预测全局光流向量，辅助 VLM 特征学运动能力）")
-    parser.add_argument("--motion_out_dim", type=int, default=6,
-                        help="运动预测头输出维度（num_views × 2，默认 3视角×2=6）")
-    parser.add_argument("--motion_loss_weight", type=float, default=0.1,
-                        help="辅助运动损失权重 λ（默认 0.1）")
-
     # === ActionVAE 隐式扩散策略（RoLD arxiv:2403.07312）===
     parser.add_argument("--use_action_vae", action="store_true", default=False,
                         help="启用 ActionVAE：在隐空间做 flow matching（替代直接动作序列预测）")
@@ -416,9 +408,6 @@ def main(args):
             view_dropout_prob=args.view_dropout_prob,
             use_missing_token=args.use_missing_token,
             proprio_history_len=args.proprio_history_len,
-            use_motion_head=args.use_motion_head,
-            motion_out_dim=args.motion_out_dim,
-            motion_loss_weight=args.motion_loss_weight,
             use_action_vae=args.use_action_vae,
             latent_dim=args.latent_dim,
             vae_beta=args.vae_beta,
