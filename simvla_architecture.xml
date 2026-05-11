@@ -1,0 +1,118 @@
+<mxGraphModel dx="1366" dy="768" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1400" pageHeight="700" math="0" shadow="0">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+
+    <!-- ═══════════════ ZONE BACKGROUNDS ═══════════════ -->
+    <mxCell id="z1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#BDBDBD;strokeWidth=1;dashed=1;arcSize=3;verticalAlign=top;" vertex="1" parent="1"><mxGeometry x="10" y="10" width="178" height="650" as="geometry"/></mxCell>
+    <mxCell id="z2" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#4A90D9;strokeWidth=1;dashed=1;arcSize=3;" vertex="1" parent="1"><mxGeometry x="200" y="10" width="248" height="650" as="geometry"/></mxCell>
+    <mxCell id="z3" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#9B59B6;strokeWidth=1;dashed=1;arcSize=3;" vertex="1" parent="1"><mxGeometry x="460" y="10" width="228" height="650" as="geometry"/></mxCell>
+    <mxCell id="z4" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#5AAF6B;strokeWidth=1;dashed=1;arcSize=3;" vertex="1" parent="1"><mxGeometry x="700" y="10" width="268" height="650" as="geometry"/></mxCell>
+    <mxCell id="z5" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAFAFA;strokeColor=#BDBDBD;strokeWidth=1;dashed=1;arcSize=3;" vertex="1" parent="1"><mxGeometry x="980" y="10" width="168" height="650" as="geometry"/></mxCell>
+
+    <!-- Zone Titles -->
+    <mxCell id="zt1" value="&lt;b&gt;Input&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=11;fontColor=#2C3E50;" vertex="1" parent="1"><mxGeometry x="10" y="13" width="178" height="20" as="geometry"/></mxCell>
+    <mxCell id="zt2" value="&lt;b&gt;Visual Encoding&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=11;fontColor=#2C3E50;" vertex="1" parent="1"><mxGeometry x="200" y="13" width="248" height="20" as="geometry"/></mxCell>
+    <mxCell id="zt3" value="&lt;b&gt;Dual-Stream Fusion&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=11;fontColor=#2C3E50;" vertex="1" parent="1"><mxGeometry x="460" y="13" width="228" height="20" as="geometry"/></mxCell>
+    <mxCell id="zt4" value="&lt;b&gt;Action Generation&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=11;fontColor=#2C3E50;" vertex="1" parent="1"><mxGeometry x="700" y="13" width="268" height="20" as="geometry"/></mxCell>
+    <mxCell id="zt5" value="&lt;b&gt;Output&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=11;fontColor=#2C3E50;" vertex="1" parent="1"><mxGeometry x="980" y="13" width="168" height="20" as="geometry"/></mxCell>
+
+    <!-- ═══════════════ INPUT ═══════════════ -->
+    <mxCell id="sl1" value="&lt;font style=&quot;font-size:9px;color:#7F8C8D;&quot;&gt;&lt;i&gt;Static Views&lt;/i&gt;&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;" vertex="1" parent="1"><mxGeometry x="18" y="38" width="162" height="16" as="geometry"/></mxCell>
+    <mxCell id="i_front" value="&lt;b&gt;Front Camera&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#5D8AA8;&quot;&gt;[C, H, W]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EBF4FB;strokeColor=#4A90D9;strokeWidth=1.5;fontSize=10;arcSize=10;" vertex="1" parent="1"><mxGeometry x="20" y="56" width="158" height="46" as="geometry"/></mxCell>
+    <mxCell id="i_img0" value="&lt;b&gt;Camera 0&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#5D8AA8;&quot;&gt;[C, H, W]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EBF4FB;strokeColor=#4A90D9;strokeWidth=1.5;fontSize=10;arcSize=10;" vertex="1" parent="1"><mxGeometry x="20" y="112" width="158" height="46" as="geometry"/></mxCell>
+    <mxCell id="i_img1" value="&lt;b&gt;Camera 1&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#5D8AA8;&quot;&gt;[C, H, W]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EBF4FB;strokeColor=#4A90D9;strokeWidth=1.5;fontSize=10;arcSize=10;" vertex="1" parent="1"><mxGeometry x="20" y="168" width="158" height="46" as="geometry"/></mxCell>
+
+    <mxCell id="sl2" value="&lt;font style=&quot;font-size:9px;color:#7F8C8D;&quot;&gt;&lt;i&gt;Dynamic View (Wrist)&lt;/i&gt;&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;" vertex="1" parent="1"><mxGeometry x="18" y="226" width="162" height="16" as="geometry"/></mxCell>
+    <mxCell id="i_wt" value="&lt;b&gt;Wrist  frame&lt;sub&gt;t&lt;/sub&gt;&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#C0734A;&quot;&gt;[C, H, W]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF5EC;strokeColor=#E8943A;strokeWidth=1.5;fontSize=10;arcSize=10;" vertex="1" parent="1"><mxGeometry x="20" y="246" width="158" height="46" as="geometry"/></mxCell>
+    <mxCell id="i_wprev" value="&lt;b&gt;Wrist  frame&lt;sub&gt;t-1&lt;/sub&gt;&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#C0734A;&quot;&gt;[C, H, W] (prev)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF5EC;strokeColor=#E8943A;strokeWidth=1.5;dashed=1;fontSize=10;arcSize=10;" vertex="1" parent="1"><mxGeometry x="20" y="302" width="158" height="46" as="geometry"/></mxCell>
+
+    <mxCell id="i_lang" value="&lt;b&gt;Language Instruction&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#C0734A;&quot;&gt;text → token ids&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF5EC;strokeColor=#E8943A;strokeWidth=1.5;fontSize=10;arcSize=10;" vertex="1" parent="1"><mxGeometry x="20" y="390" width="158" height="46" as="geometry"/></mxCell>
+    <mxCell id="i_prop" value="&lt;b&gt;Proprioception&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#3D9B6A;&quot;&gt;ee_state [7]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAFAF1;strokeColor=#5AAF6B;strokeWidth=1.5;fontSize=10;arcSize=10;" vertex="1" parent="1"><mxGeometry x="20" y="466" width="158" height="46" as="geometry"/></mxCell>
+
+    <!-- ═══════════════ VISUAL ENCODING ═══════════════ -->
+    <mxCell id="e_vlm" value="&lt;b&gt;SmolVLM-500M-Instruct&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;&quot;&gt;SigLIP Vision Encoder&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;&quot;&gt;+ Pixel-Shuffle Connector&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;&quot;&gt;+ Idefics3 Language Model&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EBF4FB;strokeColor=#4A90D9;strokeWidth=2;fontSize=10;arcSize=5;" vertex="1" parent="1"><mxGeometry x="214" y="55" width="222" height="200" as="geometry"/></mxCell>
+    <mxCell id="e_vout" value="VLM Features&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#5D8AA8;&quot;&gt;[B,  V×P,  D]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D6EAF8;strokeColor=#4A90D9;strokeWidth=1;fontSize=9;arcSize=8;" vertex="1" parent="1"><mxGeometry x="240" y="270" width="170" height="42" as="geometry"/></mxCell>
+
+    <mxCell id="e_mcnn" value="&lt;b&gt;★  MotionCNN&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8.5px;&quot;&gt;Structured-Pruned CNN (~3M)&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#A07020;&quot;&gt;Δ = frame&lt;sub&gt;t&lt;/sub&gt; − frame&lt;sub&gt;t−1&lt;/sub&gt;&lt;br&gt;→ Motion Map M [B, P]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF9E7;strokeColor=#F5A623;strokeWidth=2.5;fontSize=10;arcSize=5;" vertex="1" parent="1"><mxGeometry x="214" y="400" width="222" height="120" as="geometry"/></mxCell>
+
+    <!-- ═══════════════ DUAL-STREAM FUSION ═══════════════ -->
+    <mxCell id="f_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F9F0FF;strokeColor=#9B59B6;strokeWidth=2.5;arcSize=5;" vertex="1" parent="1"><mxGeometry x="472" y="50" width="204" height="490" as="geometry"/></mxCell>
+    <mxCell id="f_ttl" value="&lt;b&gt;★  Dual-Stream Fusion&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=10;fontColor=#7D3C98;" vertex="1" parent="1"><mxGeometry x="472" y="53" width="204" height="20" as="geometry"/></mxCell>
+
+    <mxCell id="f_static" value="&lt;b&gt;Static Stream&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#5D8AA8;&quot;&gt;front + cam0 + cam1&lt;br&gt;[B, 3P, D]  →  Query&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EBF4FB;strokeColor=#4A90D9;strokeWidth=1.5;fontSize=9;arcSize=8;" vertex="1" parent="1"><mxGeometry x="484" y="80" width="180" height="80" as="geometry"/></mxCell>
+    <mxCell id="f_dyn" value="&lt;b&gt;Dynamic Stream&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#C0734A;&quot;&gt;wrist features&lt;br&gt;[B, P, D]  →  Key / Value&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF5EC;strokeColor=#E8943A;strokeWidth=1.5;fontSize=9;arcSize=8;" vertex="1" parent="1"><mxGeometry x="484" y="180" width="180" height="78" as="geometry"/></mxCell>
+    <mxCell id="f_cattn" value="&lt;b&gt;★  Motion-Guided&lt;br&gt;Cross-Attention&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#7D3C98;&quot;&gt;logits += scale × M&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#7F8C8D;&quot;&gt;Q = Static,  K/V = Wrist&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5EEF8;strokeColor=#8E44AD;strokeWidth=2;fontSize=9;arcSize=8;" vertex="1" parent="1"><mxGeometry x="484" y="280" width="180" height="110" as="geometry"/></mxCell>
+    <mxCell id="f_out" value="Fused Features&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#7D3C98;&quot;&gt;[B,  T_enc,  D]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#9B59B6;strokeWidth=1.5;fontSize=9;arcSize=8;" vertex="1" parent="1"><mxGeometry x="484" y="412" width="180" height="44" as="geometry"/></mxCell>
+
+    <!-- ═══════════════ ACTION GENERATION ═══════════════ -->
+    <mxCell id="a_bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F9F0FF;strokeColor=#9B59B6;strokeWidth=2.5;arcSize=5;" vertex="1" parent="1"><mxGeometry x="712" y="50" width="244" height="310" as="geometry"/></mxCell>
+    <mxCell id="a_ttl" value="&lt;b&gt;★  ActionVAE&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#9B59B6;&quot;&gt;Latent Diffusion  (RoLD, arXiv:2403.07312)&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=10;" vertex="1" parent="1"><mxGeometry x="712" y="53" width="244" height="30" as="geometry"/></mxCell>
+
+    <mxCell id="a_enc" value="&lt;b&gt;Encoder&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#7F8C8D;&quot;&gt;Action [B,T,7]&lt;br&gt;→ μ, log σ²  [B, 32]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5EEF8;strokeColor=#9B59B6;strokeWidth=1.5;fontSize=9;arcSize=8;" vertex="1" parent="1"><mxGeometry x="724" y="93" width="108" height="84" as="geometry"/></mxCell>
+    <mxCell id="a_z" value="&lt;b&gt;z&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#7D3C98;&quot;&gt;[B, 32]&lt;/font&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#F5EEF8;strokeColor=#9B59B6;strokeWidth=2;fontSize=10;" vertex="1" parent="1"><mxGeometry x="846" y="108" width="90" height="54" as="geometry"/></mxCell>
+    <mxCell id="a_dec" value="&lt;b&gt;Decoder&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#7F8C8D;&quot;&gt;z + VLM features&lt;br&gt;→ Action  [B,T,7]&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5EEF8;strokeColor=#9B59B6;strokeWidth=1.5;fontSize=9;arcSize=8;" vertex="1" parent="1"><mxGeometry x="724" y="205" width="108" height="80" as="geometry"/></mxCell>
+    <mxCell id="a_loss" value="L&lt;sub&gt;KL&lt;/sub&gt; + L&lt;sub&gt;recon&lt;/sub&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FADBD8;strokeColor=#E74C3C;strokeWidth=1.5;fontSize=9;dashed=1;" vertex="1" parent="1"><mxGeometry x="844" y="218" width="94" height="40" as="geometry"/></mxCell>
+
+    <mxCell id="a_flow" value="&lt;b&gt;LatentFlowNet&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;&quot;&gt;Flow Matching in latent space&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#7F8C8D;&quot;&gt;z_t → velocity → z_0&lt;br&gt;(Euler integration, t: 1→0)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAFAF1;strokeColor=#5AAF6B;strokeWidth=2;fontSize=9;arcSize=5;" vertex="1" parent="1"><mxGeometry x="712" y="390" width="244" height="110" as="geometry"/></mxCell>
+
+    <!-- ═══════════════ OUTPUT ═══════════════ -->
+    <mxCell id="o_act" value="&lt;b&gt;Actions&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:8px;color:#3D9B6A;&quot;&gt;[B,  T,  7]&lt;br&gt;horizon × dim_action&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAFAF1;strokeColor=#5AAF6B;strokeWidth=2;fontSize=10;arcSize=10;" vertex="1" parent="1"><mxGeometry x="994" y="268" width="148" height="84" as="geometry"/></mxCell>
+
+    <!-- ═══════════════ ARROWS ═══════════════ -->
+    <!-- Static → SmolVLM -->
+    <mxCell id="ar1" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#4A90D9;strokeWidth=1.5;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" edge="1" source="i_front" target="e_vlm" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="ar2" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#4A90D9;strokeWidth=1.5;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="i_img0" target="e_vlm" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="ar3" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#4A90D9;strokeWidth=1.5;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.72;entryDx=0;entryDy=0;" edge="1" source="i_img1" target="e_vlm" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- Wrist_t → SmolVLM -->
+    <mxCell id="ar4" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#E8943A;strokeWidth=1.5;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.9;entryDx=0;entryDy=0;" edge="1" source="i_wt" target="e_vlm" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- Language → SmolVLM -->
+    <mxCell id="ar5" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#E8943A;strokeWidth=1.5;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.98;entryDx=0;entryDy=0;" edge="1" source="i_lang" target="e_vlm" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- wrist_t + wrist_prev → MotionCNN -->
+    <mxCell id="ar6" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#F5A623;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.3;entryDx=0;entryDy=0;" edge="1" source="i_wt" target="e_mcnn" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <mxCell id="ar7" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#F5A623;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.7;entryDx=0;entryDy=0;" edge="1" source="i_wprev" target="e_mcnn" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- SmolVLM → VLM output -->
+    <mxCell id="ar8" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#4A90D9;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" source="e_vlm" target="e_vout" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- VLM features → Static Stream -->
+    <mxCell id="ar9" value="[B, V×P, D]" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#4A90D9;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;fontColor=#7F8C8D;align=center;" edge="1" source="e_vout" target="f_static" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- VLM features → Dynamic Stream -->
+    <mxCell id="ar10" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#E8943A;strokeWidth=1.5;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="e_vout" target="f_dyn" parent="1"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="450" y="291"/><mxPoint x="450" y="219"/></Array></mxGeometry></mxCell>
+    <!-- MotionCNN → Cross-Attn (M bias) -->
+    <mxCell id="ar11" value="M [B,P]" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#F5A623;strokeWidth=2.5;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.85;entryDx=0;entryDy=0;fontSize=8;fontColor=#D4840A;fontStyle=1;align=center;" edge="1" source="e_mcnn" target="f_cattn" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- Static → Cross-Attn -->
+    <mxCell id="ar12" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#4A90D9;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" source="f_static" target="f_cattn" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- Dynamic → Cross-Attn -->
+    <mxCell id="ar13" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#E8943A;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" source="f_dyn" target="f_cattn" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- Cross-Attn → Fused output -->
+    <mxCell id="ar14" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#9B59B6;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" source="f_cattn" target="f_out" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- Fused → ActionVAE -->
+    <mxCell id="ar15" value="[B, T_enc, D]" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#9B59B6;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;fontColor=#7F8C8D;align=center;" edge="1" source="f_out" target="a_bg" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- Enc → z -->
+    <mxCell id="ar16" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#9B59B6;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" source="a_enc" target="a_z" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- z → Dec -->
+    <mxCell id="ar17" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#9B59B6;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" source="a_z" target="a_dec" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- ActionVAE → LatentFlowNet -->
+    <mxCell id="ar18" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#9B59B6;strokeWidth=1.5;endArrow=block;endFill=1;" edge="1" source="a_bg" target="a_flow" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- LatentFlowNet → Output -->
+    <mxCell id="ar19" value="decode(z)" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#5AAF6B;strokeWidth=2;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=8;fontColor=#3D9B6A;fontStyle=1;" edge="1" source="a_flow" target="o_act" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+    <!-- Proprio → LatentFlowNet -->
+    <mxCell id="ar20" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#5AAF6B;strokeWidth=1.5;endArrow=block;endFill=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.85;entryDx=0;entryDy=0;" edge="1" source="i_prop" target="a_flow" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+    <!-- ═══════════════ LEGEND ═══════════════ -->
+    <mxCell id="lgbg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FAFAFA;strokeColor=#BDC3C7;arcSize=5;strokeWidth=1;" vertex="1" parent="1"><mxGeometry x="10" y="572" width="430" height="80" as="geometry"/></mxCell>
+    <mxCell id="lgttl" value="&lt;b&gt;Legend&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=9;fontColor=#2C3E50;" vertex="1" parent="1"><mxGeometry x="18" y="575" width="60" height="16" as="geometry"/></mxCell>
+    <mxCell id="lg1b" value="" style="rounded=1;fillColor=#EBF4FB;strokeColor=#4A90D9;strokeWidth=2;" vertex="1" parent="1"><mxGeometry x="18" y="597" width="14" height="14" as="geometry"/></mxCell>
+    <mxCell id="lg1t" value="Vision / Language" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;" vertex="1" parent="1"><mxGeometry x="35" y="597" width="90" height="14" as="geometry"/></mxCell>
+    <mxCell id="lg2b" value="" style="rounded=1;fillColor=#FEF9E7;strokeColor=#F5A623;strokeWidth=2.5;" vertex="1" parent="1"><mxGeometry x="135" y="597" width="14" height="14" as="geometry"/></mxCell>
+    <mxCell id="lg2t" value="★ Our Contribution" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;" vertex="1" parent="1"><mxGeometry x="152" y="597" width="100" height="14" as="geometry"/></mxCell>
+    <mxCell id="lg3b" value="" style="rounded=1;fillColor=#F5EEF8;strokeColor=#9B59B6;strokeWidth=2.5;" vertex="1" parent="1"><mxGeometry x="264" y="597" width="14" height="14" as="geometry"/></mxCell>
+    <mxCell id="lg3t" value="Action / Fusion Module" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;" vertex="1" parent="1"><mxGeometry x="281" y="597" width="110" height="14" as="geometry"/></mxCell>
+    <mxCell id="lg4b" value="" style="rounded=1;fillColor=#FEF5EC;strokeColor=#E8943A;strokeWidth=1.5;dashed=1;" vertex="1" parent="1"><mxGeometry x="18" y="620" width="14" height="14" as="geometry"/></mxCell>
+    <mxCell id="lg4t" value="Dynamic (Wrist)" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;" vertex="1" parent="1"><mxGeometry x="35" y="620" width="90" height="14" as="geometry"/></mxCell>
+    <mxCell id="lg5b" value="" style="rounded=1;fillColor=#EAFAF1;strokeColor=#5AAF6B;strokeWidth=2;" vertex="1" parent="1"><mxGeometry x="135" y="620" width="14" height="14" as="geometry"/></mxCell>
+    <mxCell id="lg5t" value="Flow / Output" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;" vertex="1" parent="1"><mxGeometry x="152" y="620" width="80" height="14" as="geometry"/></mxCell>
+    <mxCell id="lg6b" value="" style="rounded=1;fillColor=#FADBD8;strokeColor=#E74C3C;strokeWidth=1.5;dashed=1;" vertex="1" parent="1"><mxGeometry x="264" y="620" width="14" height="14" as="geometry"/></mxCell>
+    <mxCell id="lg6t" value="Training Loss" style="text;html=1;strokeColor=none;fillColor=none;fontSize=9;" vertex="1" parent="1"><mxGeometry x="281" y="620" width="80" height="14" as="geometry"/></mxCell>
+
+  </root>
+</mxGraphModel>
