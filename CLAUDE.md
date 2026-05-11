@@ -26,6 +26,8 @@ pip install tensorflow tensorflow-datasets
 
 **重要**：必须使用 `transformers>=4.57.0`，SmolVLM 内部使用 `Idefics3` 架构。
 
+**注意**：`paths.env` 已被 `.gitignore` 排除，不会提交到仓库。首次使用时从 `paths.env.template` 复制并修改。
+
 ## 路径配置
 
 训练前修改 `paths.env` 设置本地路径，脚本在 `SIMVLA_SMOLVLM_MODEL` 未设置时会自动加载：
@@ -34,7 +36,9 @@ pip install tensorflow tensorflow-datasets
 |---|---|
 | `SIMVLA_SMOLVLM_MODEL` | SmolVLM 模型路径（默认：`HuggingFaceTB/SmolVLM-500M-Instruct`） |
 | `SIMVLA_VLABENCH_DATA` | VLABench RLDS 数据目录 |
+| `SIMVLA_LIBERO_DATA` | LIBERO HDF5 数据目录（shell 脚本使用） |
 | `SIMVLA_VLABENCH_CODE` | VLABench 代码仓库路径（评估时使用） |
+| `SIMVLA_OUTPUT_DIR` | checkpoint 保存根目录（子目录以时间戳命名） |
 | `SIMVLA_EVAL_RESULTS` | 评估结果保存目录 |
 | `SIMVLA_CUDA_DEVICES` | `CUDA_VISIBLE_DEVICES` 的值 |
 | `SIMVLA_NUM_GPUS` | `accelerate` 使用的 GPU 数量 |
@@ -97,6 +101,14 @@ accelerate launch --num_processes=4 --mixed_precision bf16 train_smolvlm.py \
     # 可选：--use_dual_stream --dual_stream_fusion cross_attn  # 启用双流融合
 ```
 
+**训练 VLABench 双流融合模型（cross-attention 融合，4 视角）：**
+```bash
+bash train_vlabench_dualstream.sh [batch_size] [learning_coef] [resume_ckpt] [fusion_type]
+# 默认：batch=32, coef=0.1, fusion=cross_attn
+# fusion_type 可选：add | concat_linear | cross_attn
+# 输出目录自动带时间戳：${SIMVLA_OUTPUT_DIR}/vlabench_dualstream_${fusion_type}_${timestamp}
+```
+
 **准备 VLABench 元数据和归一化统计（一次性）：**
 ```bash
 python create_vlabench_meta.py --data_dir ./datasets/vlabench/data/1.0.0 --output ./datasets/metas/vlabench_train.json
@@ -105,7 +117,16 @@ python compute_vlabench_norm_stats.py --data_dir ./datasets/vlabench/data/1.0.0 
 
 ## 评估命令
 
-评估采用客户端-服务端架构，需要两个独立的 conda 环境。
+**离线 Action MSE 评估（无需模拟器，快速验证）：**
+```bash
+python eval_action_mse.py \
+    --checkpoint ./runs/simvla_vlabench_small/ckpt-10000 \
+    --norm_stats ./norm_stats/vlabench_norm.json \
+    --data_dir /path/to/vlabench/data/1.0.0 \
+    --num_shards 10 --num_samples 200
+```
+
+在线评估采用客户端-服务端架构，需要两个独立的 conda 环境。
 
 **启动策略服务器**（在 `simvla` 环境中）：
 ```bash
@@ -188,7 +209,7 @@ SmolVLM 视觉编码器        SmolVLM 分词器
 
 - **`datasets/domain_handler/registry.py`**：数据集 handler 注册表，将数据集名称映射到 handler 类。添加新数据集需：①继承 `DomainHandler`（或 `BaseHDF5Handler`）并实现 `iter_episode()`；②在 `registry.py` 的 `_REGISTRY` 字典中注册；③在 `domain_config.py` 的 `DATA_WEIGHTS` 中添加权重。
 
-- **`datasets/domain_config.py`**：`DATA_WEIGHTS` 字典控制多数据集混合时的采样权重
+- **`datasets/domain_config.py`**：`DATA_WEIGHTS` 控制多数据集混合时的采样权重；`DATA_DOMAIN_ID` 为每个数据集分配域 ID（LIBERO=0，VLABench=1），用于训练时区分数据来源
 
 ### 训练细节
 
@@ -205,10 +226,21 @@ HDF5 结构：`data/demo_X/{actions, obs/agentview_rgb, obs/eye_in_hand_rgb, obs
 - 本体感知：8 维 `[ee_pos(3), axis_angle(3), gripper_states(2)]`
 - 图像：原始 128×128，训练时上采样至 384×384
 
+### VLABench 数据格式
+
+RLDS/TFRecord 结构：每个 shard 文件对应一条轨迹，内部包含多个 episode。
+- 视角：`front`、`wrist`、`image_0`、`image_1`（4 个视角）
+- 动作：7 维 `[xyz(3), euler(3), gripper(1)]`，绝对位置
+- 本体感知：7 维 `[xyz(3), euler(3), gripper(1)]`，无欧拉角→轴角转换
+- 图像：无需旋转 180°（与 LIBERO 不同）
+
 ### 归一化统计格式
 
 `norm_stats/libero_norm.json` 包含 `state` 和 `actions` 两个键，每个键下有 `mean`、`std`、`q01`、`q99` 数组。由 `LiberoJointActionSpace` 加载，用于 Z-score 或分位数归一化。
 
 ### 推理服务协议
 
-`serve_smolvlm_libero.py` 通过 `msgpack_numpy` 序列化暴露 **WebSocket** 服务器。接收：`{observation/image, observation/wrist_image, observation/state, prompt}`。返回：`{actions: [[7维] × horizon]}`。
+两个评估服务器均通过 `msgpack_numpy` 序列化暴露 **WebSocket** 服务：
+
+- **LIBERO**（`serve_smolvlm_libero.py`）：接收 `{observation/image, observation/wrist_image, observation/state, prompt}`，返回 `{actions: [[7维] × horizon]}`（增量动作）
+- **VLABench**（`serve_smolvlm_vlabench.py`）：接收 `{observation/images: [4个numpy数组], observation/state: [7], prompt}`，返回 `{actions: [[7维] × horizon]}`（绝对位置动作）
