@@ -146,6 +146,25 @@ class SmolVLMVLA(PreTrainedModel):
             )
             logging.info(f"[SmolVLMVLA] Dual-stream fusion enabled: {config.dual_stream_fusion}, hidden_size={vlm_hidden}")
 
+        # 运动引导跨视角注意力（Motion-Guided Cross-Attention）
+        self.motion_cnn = None
+        self.use_motion_guided_attn = getattr(config, "use_motion_guided_attn", False)
+        if self.use_motion_guided_attn:
+            from .dual_stream import MotionCNN
+            # 通过 dummy forward 获取实际 num_patches（SigLIP + connector 决定）
+            with torch.no_grad():
+                _dummy = torch.zeros(1, 3, config.image_size, config.image_size,
+                                     device="cpu", dtype=torch.float32)
+                _vis = self.vlm.model.vision_model(pixel_values=_dummy).last_hidden_state
+                if hasattr(self.vlm.model, "connector"):
+                    _vis = self.vlm.model.connector(_vis)
+                _num_patches = _vis.shape[1]
+            self.motion_cnn = MotionCNN(num_patches=_num_patches, image_size=config.image_size)
+            logging.info(
+                f"[SmolVLMVLA] Motion-Guided Cross-Attention enabled: "
+                f"num_patches={_num_patches}, image_size={config.image_size}"
+            )
+
         # Deferred FastAPI app
         self.app: FastAPI | None = None
 
@@ -369,11 +388,12 @@ class SmolVLMVLA(PreTrainedModel):
     # ================================= training =================================
     def forward(
         self,
-        input_ids: torch.LongTensor,        # [B, L] - tokenized language instruction
-        image_input: torch.FloatTensor,     # [B, V, C, H, W]
-        image_mask: torch.Tensor,           # [B, V]
-        proprio: torch.Tensor,              # [B, dim_proprio] 或 [B, K, dim_proprio]
-        action: torch.Tensor,               # [B, T=num_actions, D=dim_action]
+        input_ids: torch.LongTensor,                    # [B, L] - tokenized language instruction
+        image_input: torch.FloatTensor,                 # [B, V, C, H, W]
+        image_mask: torch.Tensor,                       # [B, V]
+        proprio: torch.Tensor,                          # [B, dim_proprio] 或 [B, K, dim_proprio]
+        action: torch.Tensor,                           # [B, T=num_actions, D=dim_action]
+        wrist_prev_pixels: torch.FloatTensor | None = None,  # [B, C, H, W] 前一帧 wrist 图像
     ) -> Dict[str, torch.Tensor]:
         """
         Flow Matching training.
@@ -389,12 +409,21 @@ class SmolVLMVLA(PreTrainedModel):
         """
         enc = self.forward_vlm_efficient(image_input, image_mask, input_ids)
 
+        # 运动激活图（帧差分 → MotionCNN）
+        motion_map = None
+        if self.motion_cnn is not None and wrist_prev_pixels is not None:
+            # wrist 视角索引固定为 1（front=0, wrist=1, image_0=2, image_1=3）
+            wrist_current = image_input[:, 1]   # [B, C, H, W]
+            diff = wrist_current - wrist_prev_pixels  # [B, C, H, W]
+            motion_map = self.motion_cnn(diff)        # [B, num_patches]
+
         # 双流融合（可选）
         if self.dual_stream_fusion is not None:
             enc["vlm_features"] = self.dual_stream_fusion(
                 enc["vlm_features"],
                 enc["num_valid_views"],
                 num_patches_per_view=enc.get("num_patches_per_view"),
+                motion_map=motion_map,
             )
 
         B = input_ids.shape[0]
@@ -487,10 +516,11 @@ class SmolVLMVLA(PreTrainedModel):
         image_mask: torch.Tensor,
         proprio: torch.Tensor,
         steps: int = 10,
+        wrist_prev_pixels: torch.FloatTensor | None = None,  # [B, C, H, W] 前一帧 wrist
     ) -> torch.Tensor:
         """
         Flow Matching inference (Euler integration).
-        
+
         1) Initialize x_t = noise (t=1)
         2) Loop t from 1 to 0:
            - Model predicts velocity v_t
@@ -500,12 +530,20 @@ class SmolVLMVLA(PreTrainedModel):
         self.eval()
         enc = self.forward_vlm_efficient(image_input, image_mask, input_ids)
 
+        # 运动激活图（帧差分 → MotionCNN）
+        motion_map = None
+        if self.motion_cnn is not None and wrist_prev_pixels is not None:
+            wrist_current = image_input[:, 1]           # [B, C, H, W]
+            diff = wrist_current - wrist_prev_pixels    # [B, C, H, W]
+            motion_map = self.motion_cnn(diff)          # [B, num_patches]
+
         # 双流融合（可选）
         if self.dual_stream_fusion is not None:
             enc["vlm_features"] = self.dual_stream_fusion(
                 enc["vlm_features"],
                 enc["num_valid_views"],
                 num_patches_per_view=enc.get("num_patches_per_view"),
+                motion_map=motion_map,
             )
 
         B = input_ids.shape[0]

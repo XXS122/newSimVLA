@@ -83,6 +83,12 @@ class SmolVLMVLAConfig(PretrainedConfig):
         vae_beta: float = 0.001,        # β-VAE KL 散度权重
         vae_recon_weight: float = 1.0,  # 重建损失权重
 
+        # === 运动引导跨视角注意力（Motion-Guided Cross-Attention）===
+        # 帧差分图 → 轻量剪枝 CNN → 运动激活图 → 注入 cross-attention bias
+        # 让静态视角自动聚焦到 wrist 图中正在运动的区域
+        # 参考：DeltaCNN (CVPR 2022, arXiv:2203.03996)
+        use_motion_guided_attn: bool = False,
+
         **kwargs,
     ):
         # SmolVLM backbone path
@@ -131,6 +137,9 @@ class SmolVLMVLAConfig(PretrainedConfig):
         self.latent_dim = latent_dim
         self.vae_beta = vae_beta
         self.vae_recon_weight = vae_recon_weight
+
+        # 运动引导跨视角注意力
+        self.use_motion_guided_attn = use_motion_guided_attn
 
         # Initialize base HF config attributes
         super().__init__(**kwargs)

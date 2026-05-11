@@ -119,7 +119,16 @@ def preprocess_images(images_np):
     return image_input, image_mask
 
 
-def infer(observation: Dict[str, Any]) -> Dict[str, Any]:
+def infer(
+    observation: Dict[str, Any],
+    prev_wrist_tensor: Optional[torch.Tensor] = None,
+) -> tuple:
+    """
+    推理一步。
+
+    返回 (result_dict, current_wrist_tensor)。
+    current_wrist_tensor 供下一步作为 prev_wrist_tensor 传入（episode 级缓冲）。
+    """
     try:
         images = observation["observation/images"]   # list of 4 np arrays
         state  = np.array(observation["observation/state"], dtype=np.float32)  # [7]
@@ -128,6 +137,13 @@ def infer(observation: Dict[str, Any]) -> Dict[str, Any]:
         image_input, image_mask = preprocess_images(images)
         image_input = image_input.to(device)
         image_mask  = image_mask.to(device)
+
+        # 当前 wrist 帧（视角索引 1）
+        current_wrist_tensor = image_input[:, 1]  # [1, C, H, W]
+
+        # 第一帧：用当前帧自身作为前一帧（差分全零，不影响 attention）
+        if prev_wrist_tensor is None:
+            prev_wrist_tensor = current_wrist_tensor
 
         lang = processor.encode_language([prompt])
         lang = {k: v.to(device) for k, v in lang.items()}
@@ -141,18 +157,21 @@ def infer(observation: Dict[str, Any]) -> Dict[str, Any]:
                 image_mask=image_mask,
                 proprio=proprio,
                 steps=CONFIG["action_horizon"],
+                wrist_prev_pixels=prev_wrist_tensor,
             )
 
-        return {"actions": actions.cpu().numpy()[0].tolist()}
+        return {"actions": actions.cpu().numpy()[0].tolist()}, current_wrist_tensor
 
     except Exception as e:
         logger.error(f"Inference error: {e}")
         traceback.print_exc()
-        return {"actions": [[0.0] * CONFIG["action_dim"]] * CONFIG["action_horizon"]}
+        return {"actions": [[0.0] * CONFIG["action_dim"]] * CONFIG["action_horizon"]}, prev_wrist_tensor
 
 
 async def handle_connection(websocket, path=None):
     logger.info(f"Client connected: {websocket.remote_address}")
+    # episode 级 wrist 历史缓冲；每新连接（新 episode）重置为 None
+    prev_wrist_tensor: Optional[torch.Tensor] = None
     try:
         metadata = {
             "model": "SimVLA-VLABench",
@@ -174,7 +193,12 @@ async def handle_connection(websocket, path=None):
                 import json
                 request = json.loads(message)
 
-            result = infer(request)
+            # episode reset 信号：客户端可发送 {"reset": true} 清空历史
+            if request.get("reset", False):
+                prev_wrist_tensor = None
+                result = {"status": "reset"}
+            else:
+                result, prev_wrist_tensor = infer(request, prev_wrist_tensor)
 
             if HAS_MSGPACK:
                 response = msgpack.packb(result, use_bin_type=True)

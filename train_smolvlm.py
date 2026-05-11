@@ -196,6 +196,10 @@ def get_args_parser():
     parser.add_argument("--vae_recon_weight", type=float, default=1.0,
                         help="VAE 重建损失权重（默认 1.0）")
 
+    # === 运动引导跨视角注意力（DeltaCNN arxiv:2203.03996 启发）===
+    parser.add_argument("--use_motion_guided_attn", action="store_true", default=False,
+                        help="启用运动引导注意力：帧差分→MotionCNN→运动激活图→cross-attention bias（需同时启用 use_dual_stream）")
+
     return parser
 
 
@@ -387,6 +391,7 @@ def main(args):
         logger.info(f"  num_actions: {args.num_actions}")
         logger.info(f"  use_adaln: {args.use_adaln}")
         logger.info(f"  use_dual_stream: {args.use_dual_stream}")
+        logger.info(f"  use_motion_guided_attn: {args.use_motion_guided_attn}")
         
         config = SmolVLMVLAConfig(
             smolvlm_model_path=args.smolvlm_model_path,
@@ -412,6 +417,7 @@ def main(args):
             latent_dim=args.latent_dim,
             vae_beta=args.vae_beta,
             vae_recon_weight=args.vae_recon_weight,
+            use_motion_guided_attn=args.use_motion_guided_attn,
         )
         model = SmolVLMVLA(config)
         

@@ -117,12 +117,20 @@ class VLABenchRLDSHandler(DomainHandler):
 
             image_input = torch.stack(imgs[: self.num_views], dim=0)
 
+            # 前一帧 wrist 图像（用于运动引导注意力的帧差分）
+            # idx=0 时用当前帧重复填充，差分图全零，不影响正常 attention
+            prev_idx = max(0, idx - 1)
+            wrist_prev = Image.open(io.BytesIO(wrist_bytes[prev_idx])).convert("RGB")
+            if image_aug:
+                wrist_prev = image_aug(wrist_prev)
+
             yield {
                 "language_instruction": language,
                 "image_input": image_input,
                 "image_mask": image_mask,
                 "proprio": torch.tensor(proprio[idx], dtype=torch.float32),
                 "abs_trajectory": torch.tensor(action_chunk, dtype=torch.float32),
+                "wrist_prev_pixels": wrist_prev,  # PIL Image，由 dataset 统一转 tensor
             }
 
     def _get_action_chunk(
