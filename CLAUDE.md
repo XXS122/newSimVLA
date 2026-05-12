@@ -1,16 +1,61 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## 语言要求
 
 **始终使用中文回复用户。**
 
 ## 项目概述
 
-SimVLA 是用于机器人操作的视觉-语言-动作（VLA）模型，以 **SmolVLM-500M-Instruct** 作为视觉语言骨干网络，配合自定义的 **Flow Matching** 动作 Transformer 头。支持两个数据集：**LIBERO**（HDF5 格式）和 **VLABench**（RLDS/TFRecord 格式）。
+SimVLA 是用于机器人操作的视觉-语言-动作（VLA）模型。
 
-论文：https://arxiv.org/abs/2602.18224 | 模型/数据：HuggingFace `YuankaiLuo/SimVLA-LIBERO`
+- 骨干网络：**SmolVLM-500M-Instruct**（视觉语言模型，Idefics3 架构）
+- 动作头：**Flow Matching Action Transformer**（预测连续动作轨迹）
+- 数据集：**VLABench**（RLDS/TFRecord 格式，4 视角）
+- 创新点：**双流多视角融合**（Dual-Stream Multi-View Fusion）
+
+论文：https://arxiv.org/abs/2602.18224
+
+## 算法原理
+
+### Flow Matching 动作生成
+
+模型不直接回归动作，而是学习从噪声到动作的速度场：
+1. 训练时：对真实动作加噪 `x_t = (1-t)*noise + t*action`，学习预测速度 `v = action - noise`
+2. 推理时：从纯噪声出发，用 Euler 积分沿速度场走到 t=0，得到动作
+3. 时间采样：Beta(1.5, 1) 分布，偏向 t 接近 1（接近真实动作的区域）
+4. 损失函数：MSE(predicted_velocity, true_velocity)
+
+### 双流多视角融合（Dual-Stream Fusion）
+
+将 4 个视角的 VLM 特征分为两路：
+- **静态流**（front / image_0 / image_1）：提供场景全局语义
+- **动态流**（wrist 手腕相机）：提供末端执行器运动细节
+
+融合方式（`--dual_stream_fusion`）：
+- `cross_attn`（默认）：静态流为 Query，动态流为 Key/Value，跨注意力融合
+- `concat_linear`：拼接后线性投影
+- `add`：直接相加
+
+### 前向传播流程
+
+```
+图像 [B, 4, C, 384, 384]     语言指令
+        ↓                         ↓
+SmolVLM 视觉编码器           SmolVLM 分词器
+        ↓                         ↓
+  图像 patch 特征 ─── concat ─── 文本嵌入
+                              ↓
+               SmolVLM text_model (Idefics3)
+                              ↓
+                  vlm_features [B, T, 576]
+                              ↓
+              [可选] DualStreamFusion（双流融合）
+                              ↓
+               SmolVLMActionTransformer (768-dim, 12层)
+              (Flow Matching: 输入噪声动作+时间步+本体感知)
+                              ↓
+                   预测速度 v_t → 积分得到动作 [B, 10, 7]
+```
 
 ## 环境配置
 
@@ -24,223 +69,186 @@ pip install flash-attn==2.5.6 --no-build-isolation
 pip install tensorflow tensorflow-datasets
 ```
 
-**重要**：必须使用 `transformers>=4.57.0`，SmolVLM 内部使用 `Idefics3` 架构。
-
-**注意**：`paths.env` 已被 `.gitignore` 排除，不会提交到仓库。首次使用时从 `paths.env.template` 复制并修改。
+必须使用 `transformers>=4.57.0`。
 
 ## 路径配置
 
-训练前修改 `paths.env` 设置本地路径，脚本在 `SIMVLA_SMOLVLM_MODEL` 未设置时会自动加载：
+所有脚本通过 `paths.env` 统一管理路径（已 gitignore，首次使用从 `paths.env.template` 复制）：
 
 | 变量 | 用途 |
 |---|---|
-| `SIMVLA_SMOLVLM_MODEL` | SmolVLM 模型路径（默认：`HuggingFaceTB/SmolVLM-500M-Instruct`） |
+| `SIMVLA_SMOLVLM_MODEL` | SmolVLM 模型本地路径 |
 | `SIMVLA_VLABENCH_DATA` | VLABench RLDS 数据目录 |
-| `SIMVLA_LIBERO_DATA` | LIBERO HDF5 数据目录（shell 脚本使用） |
 | `SIMVLA_VLABENCH_CODE` | VLABench 代码仓库路径（评估时使用） |
-| `SIMVLA_OUTPUT_DIR` | checkpoint 保存根目录（子目录以时间戳命名） |
-| `SIMVLA_EVAL_RESULTS` | 评估结果保存目录 |
-| `SIMVLA_CUDA_DEVICES` | `CUDA_VISIBLE_DEVICES` 的值 |
-| `SIMVLA_NUM_GPUS` | `accelerate` 使用的 GPU 数量 |
+| `SIMVLA_OUTPUT_DIR` | checkpoint 保存根目录（子目录自动以时间戳命名） |
+| `SIMVLA_EVAL_RESULTS` | 评估结果保存目录（子目录自动以时间戳命名） |
+| `SIMVLA_CUDA_DEVICES` | CUDA_VISIBLE_DEVICES |
+| `SIMVLA_NUM_GPUS` | accelerate 使用的 GPU 数量 |
 
-## 训练命令
+## 训练
 
-**准备 LIBERO 数据集元数据（一次性）：**
+### 数据准备（一次性）
+
 ```bash
-python create_libero_meta.py \
-    --data_dir ./datasets/metas \
-    --subsets libero_10 libero_goal libero_object libero_spatial \
-    --output ./datasets/metas/libero_train.json
+# 生成训练元数据（列出所有 shard 文件路径）
+python create_vlabench_meta.py \
+    --data_dir /path/to/vlabench/data/1.0.0 \
+    --output ./datasets/metas/vlabench_train.json
+
+# 计算归一化统计（动作和本体感知的 mean/std/q01/q99）
+python compute_vlabench_norm_stats.py \
+    --data_dir /path/to/vlabench/data/1.0.0 \
+    --output ./norm_stats/vlabench_norm.json
 ```
 
-**计算 LIBERO 归一化统计（一次性）：**
+### 训练脚本一览
+
+| 脚本 | 用途 | 关键参数 |
+|---|---|---|
+| `train_vlabench_small.sh` | 基线全量训练（无双流） | 200K 步，batch=32，全部 shard |
+| `train_vlabench_dualstream.sh` | 双流融合全量训练 | 200K 步，batch=32，`--use_dual_stream` |
+| `train_vlabench_debug.sh` | 快速调试训练 | 10K 步，batch=16，50 shard |
+
+### 基线训练（无双流）
+
 ```bash
-python compute_libero_norm_stats.py \
-    --data_dir ./datasets/metas \
-    --subsets libero_10 libero_goal libero_object libero_spatial \
-    --output ./norm_stats/libero_norm.json
+bash train_vlabench_small.sh [batch_size] [learning_coef] [resume_ckpt]
+# 默认：batch=32, coef=0.1
+# 输出：${SIMVLA_OUTPUT_DIR}/vlabench_small_<timestamp>/
 ```
 
-**训练 LIBERO 小模型（768-hidden/12-layer，GPU 0-3）：**
-```bash
-bash train_smolvlm_small.sh [batch_size] [learning_coef] [output_dir] [resume_ckpt]
-# 默认：batch=64, coef=0.1, output=./runs/simvla_libero_small
-```
+### 双流融合训练
 
-**训练 LIBERO 大模型（1024-hidden/24-layer，GPU 4-7）：**
-```bash
-bash train_smolvlm_large.sh [batch_size] [learning_coef] [output_dir] [resume_ckpt]
-# 默认：batch=64, coef=0.2, output=./runs/simvla_libero_large
-```
-
-两个脚本均使用 `accelerate launch --num_processes=4 --mixed_precision bf16`。
-
-**训练 VLABench 小模型（fp16，4 视角）：**
-```bash
-bash train_vlabench_small.sh [batch_size] [learning_coef] [output_dir] [resume_ckpt]
-# 默认：batch=32, coef=0.1, output=./runs/simvla_vlabench_small
-# 使用 fp16（非 bf16），num_workers=0，action_mode=vlabench_joint
-```
-
-**从 checkpoint 恢复训练：**
-```bash
-bash train_smolvlm_small.sh 64 0.1 ./runs/my_run ./runs/my_run/ckpt-50000
-```
-
-**直接调用 Python 训练（自定义配置）：**
-```bash
-accelerate launch --num_processes=4 --mixed_precision bf16 train_smolvlm.py \
-    --output_dir ./runs/test \
-    --train_metas_path ./datasets/metas/libero_train.json \
-    --norm_stats_path ./norm_stats/libero_norm.json \
-    --action_mode libero_joint \
-    --batch_size 32 --learning_rate 1e-4 --num_actions 10 \
-    --hidden_size 768 --depth 12 --num_heads 12 --image_size 384 \
-    --num_views 3                       # LIBERO 用 3，VLABench 用 4
-    # 可选：--use_adaln                 # 启用 DiT/AdaLN 模式
-    # 可选：--use_dual_stream --dual_stream_fusion cross_attn  # 启用双流融合
-```
-
-**训练 VLABench 双流融合模型（cross-attention 融合，4 视角）：**
 ```bash
 bash train_vlabench_dualstream.sh [batch_size] [learning_coef] [resume_ckpt] [fusion_type]
 # 默认：batch=32, coef=0.1, fusion=cross_attn
 # fusion_type 可选：add | concat_linear | cross_attn
-# 输出目录自动带时间戳：${SIMVLA_OUTPUT_DIR}/vlabench_dualstream_${fusion_type}_${timestamp}
+# 输出：${SIMVLA_OUTPUT_DIR}/vlabench_dualstream_<fusion>_<timestamp>/
 ```
 
-**准备 VLABench 元数据和归一化统计（一次性）：**
+### 快速调试训练（1-2 小时出 checkpoint）
+
 ```bash
-python create_vlabench_meta.py --data_dir ./datasets/vlabench/data/1.0.0 --output ./datasets/metas/vlabench_train.json
-python compute_vlabench_norm_stats.py --data_dir ./datasets/vlabench/data/1.0.0 --output ./norm_stats/vlabench_norm.json
+bash train_vlabench_debug.sh [batch_size] [learning_coef] [resume_ckpt]
+# 默认：batch=16, coef=0.1, 50 shard, 10K 步
+# 输出：${SIMVLA_OUTPUT_DIR}/vlabench_debug_<timestamp>/
+# 脚本内 USE_DUAL_STREAM=true/false 控制是否开启双流
 ```
 
-## 评估命令
+### 从 checkpoint 恢复训练
 
-**离线 Action MSE 评估（无需模拟器，快速验证）：**
+```bash
+bash train_vlabench_small.sh 32 0.1 /path/to/ckpt-50000
+```
+
+### 训练超参数
+
+| 参数 | 全量训练 | 调试训练 |
+|---|---|---|
+| 总步数 | 200,000 | 10,000 |
+| Batch size | 32 | 16 |
+| 学习率 | 1e-4 | 1e-4 |
+| VLM 学习率系数 | 0.1 | 0.1 |
+| VLM 冻结步数 | 1000 | 500 |
+| 保存间隔 | 10,000 | 2,000 |
+| 图像尺寸 | 384×384 | 384×384 |
+| 视角数 | 4 | 4 |
+| 动作维度 | 7 | 7 |
+| 动作 horizon | 10 | 10 |
+| 混合精度 | fp16 | fp16 |
+| Action Transformer | 768-dim, 12层, 12头 | 同左 |
+
+## 评估
+
+评估采用**客户端-服务端架构**，需要两个终端、两个 conda 环境：
+- 终端1（`simvla` 环境）：加载模型，启动 WebSocket 策略服务器
+- 终端2（`vlabench` 环境）：运行 MuJoCo 模拟器，通过 WebSocket 请求动作
+
+### 步骤1：启动策略服务器（终端1，simvla 环境）
+
+```bash
+conda activate simvla
+cd /datasets/code/newSimVLA
+CUDA_VISIBLE_DEVICES=0 python evaluation/vlabench/serve_smolvlm_vlabench.py \
+    --checkpoint /path/to/ckpt-XXXXX \
+    --norm_stats ./norm_stats/vlabench_norm.json \
+    --port 8200
+```
+
+等待打印 `Uvicorn running on ...` 后再启动客户端。
+
+### 步骤2：运行评估客户端（终端2，vlabench 环境）
+
+```bash
+conda activate vlabench
+cd /datasets/code/newSimVLA/evaluation/vlabench
+bash run_eval_vlabench.sh <port> <n_episode> <eval_track> <save_name> [checkpoint_path]
+```
+
+参数说明：
+- `port`：服务器端口（与步骤1一致）
+- `n_episode`：每个任务跑多少个 episode（调试用 10，正式用 50）
+- `eval_track`：评估 track 名称
+  - `track_debug_simple`：调试用，含 select_fruit / select_drink 等少量任务
+  - `track_1_in_distribution`：完整分布内评估
+- `save_name`：结果保存子目录名
+- `checkpoint_path`（可选）：仅写入 eval_info.txt 记录，客户端不加载模型
+
+示例：
+```bash
+# 调试评估（快速验证）
+bash run_eval_vlabench.sh 8200 10 track_debug_simple debug_eval \
+    /datasets/simvla_output/checkpoint/vlabench_debug_20260505_16/ckpt-10000
+
+# 完整评估
+bash run_eval_vlabench.sh 8200 50 track_1_in_distribution full_eval \
+    /path/to/ckpt-XXXXX
+```
+
+结果保存到 `$SIMVLA_EVAL_RESULTS/<save_name>_<timestamp>/`，包含 `eval_info.txt` 和评估指标。
+
+### 离线 Action MSE 评估（无需模拟器）
+
 ```bash
 python eval_action_mse.py \
-    --checkpoint ./runs/simvla_vlabench_small/ckpt-10000 \
+    --checkpoint /path/to/ckpt-XXXXX \
     --norm_stats ./norm_stats/vlabench_norm.json \
     --data_dir /path/to/vlabench/data/1.0.0 \
-    --num_shards 10 --num_samples 200
+    --num_shards 10 --num_samples 200 --num_views 4
 ```
 
-在线评估采用客户端-服务端架构，需要两个独立的 conda 环境。
+## 核心代码结构
 
-**启动策略服务器**（在 `simvla` 环境中）：
-```bash
-cd evaluation/libero
-CUDA_VISIBLE_DEVICES=1 python serve_smolvlm_libero.py \
-    --checkpoint ../../runs/simvla_libero_large/ckpt-150000 \
-    --norm_stats ../../norm_stats/libero_norm.json \
-    --port 8102
-# 也可从 HuggingFace 加载：--checkpoint YuankaiLuo/SimVLA-LIBERO
-```
+| 文件 | 功能 |
+|---|---|
+| `models/modeling_smolvlm_vla.py` | 主模型 SmolVLMVLA（VLM + Action Transformer + Flow Matching） |
+| `models/transformer_smolvlm.py` | Action Transformer（Concat 模式 / AdaLN 模式） |
+| `models/dual_stream.py` | 双流多视角融合模块（CrossAttention / Add / ConcatLinear） |
+| `models/action_hub.py` | 动作空间注册表（vlabench_joint: 7维动作 + 7维本体感知） |
+| `models/configuration_smolvlm_vla.py` | 模型配置（HuggingFace PretrainedConfig） |
+| `models/processing_smolvlm_vla.py` | 图像预处理 + 语言分词 |
+| `datasets/dataset_smolvlm.py` | 数据加载器（无限 IterableDataset） |
+| `datasets/domain_handler/vlabench_rlds.py` | VLABench RLDS 数据读取 |
+| `train_smolvlm.py` | 统一训练入口（所有 shell 脚本调用此文件） |
+| `evaluation/vlabench/serve_smolvlm_vlabench.py` | 评估策略服务器 |
+| `evaluation/vlabench/simvla_policy.py` | VLABench 客户端策略（WebSocket 通信） |
+| `evaluation/vlabench/run_eval_vlabench.sh` | 评估启动脚本 |
+| `eval_action_mse.py` | 离线 Action MSE 评估 |
 
-**运行评估**（在 `libero` 环境中——需单独安装 LIBERO 模拟器的 conda 环境）：
-```bash
-cd evaluation/libero
-bash run_eval_all.sh 8102 10 "eval_run_name" "0 1 2 3"  # num_trials=10
-bash run_eval_all.sh 8102 50 "eval_run_name" "0 1 2 3"  # num_trials=50
-```
+## VLABench 数据格式
 
-`libero` 环境需单独创建：`conda create -n libero python=3.8.13`，并安装 LIBERO 模拟器包。
-
-**VLABench 评估**（在 `simvla` 环境中启动服务器，在 VLABench 专属环境中运行客户端）：
-```bash
-cd evaluation/vlabench
-CUDA_VISIBLE_DEVICES=0 python serve_smolvlm_vlabench.py \
-    --checkpoint ../../runs/simvla_vlabench_small/ckpt-XXXXX \
-    --norm_stats ../../norm_stats/vlabench_norm.json --port 8103
-# 然后在 vlabench 环境中：
-bash run_eval_vlabench.sh 8103 "eval_run_name"
-```
-
-## 架构
-
-### 前向传播流程
-
-```
-图像 [B, V, C, H, W]     语言文本
-        ↓                      ↓
-SmolVLM 视觉编码器        SmolVLM 分词器
-        ↓                      ↓
-  图像特征 ──── concat ──── 文本嵌入
-                           ↓
-               SmolVLM text_model (Idefics3)
-                           ↓
-                  vlm_features [B, T, 576]
-                           ↓
-                   SmolVLMActionTransformer
-                  (Flow Matching, 768/1024-dim)
-                           ↓
-               预测速度 v_t → 动作
-```
-
-### 核心模块
-
-- **`models/modeling_smolvlm_vla.py`**：主模型 `SmolVLMVLA`（HuggingFace `PreTrainedModel`）：
-  - `forward_vlm_efficient()`：训练用完整 VLM 前向（视觉+语言融合）
-  - `forward()`：Flow Matching 训练损失（Beta(1.5,1) 时间采样，MSE 速度损失）
-  - `generate_actions()`：Euler 积分推理（t=1→0）
-  - `run()`：FastAPI/WebSocket 部署服务
-
-- **`models/transformer_smolvlm.py`**：`SmolVLMActionTransformer`，两种模式：
-  - **Concat 模式**（`use_adaln=False`）：VLM 特征拼接到动作 token 序列
-  - **AdaLN/DiT 模式**（`use_adaln=True`）：VLM/时间/本体感知通过自适应层归一化注入
-
-- **`models/action_hub.py`**：动作空间注册表，已注册两个动作空间：
-  - `libero_joint`：`dim_action=7`，`dim_proprio=8`（ee_pos + axis_angle + gripper×2）
-  - `vlabench_joint`：`dim_action=7`，`dim_proprio=7`
-  - 用 `@register_action("name")` 装饰器添加新动作空间
-
-- **`models/dual_stream.py`**：`DualStreamFusion`——可选的双流多视角融合模块。将 VLM 特征按视角分为静态流（agentview/front/image_0/image_1）和动态流（wrist），支持三种融合方式：`add`（相加）、`concat_linear`（拼接+线性）、`cross_attn`（跨注意力，默认）。由 `SmolVLMVLAConfig.use_dual_stream` 控制是否启用。
-
-- **`models/configuration_smolvlm_vla.py`**：`SmolVLMVLAConfig`（HuggingFace `PretrainedConfig`）。关键字段：`smolvlm_model_path`、`hidden_size`、`depth`、`num_heads`、`action_mode`、`num_actions`、`use_adaln`、`image_size`、`use_dual_stream`、`dual_stream_fusion`、`num_views`
-
-- **`models/processing_smolvlm_vla.py`**：`SmolVLMVLAProcessor`，处理图像预处理（ImageNet 归一化、双三次插值缩放）和语言分词。`encode_image()` 为快速 GPU 路径；`encode_image_legacy()` 使用 HuggingFace processor
-
-- **`datasets/dataset_smolvlm.py`**：`SmolVLMDataReader`——带加权多数据集采样的无限 `IterableDataset`。输出样本：`{language_instruction, image_input [V,C,H,W], image_mask [V], proprio, action}`
-
-- **`datasets/domain_handler/libero_hdf5.py`**：`LiberoHDF5Handler`——读取 LIBERO HDF5 文件。图像在处理前**旋转 180°**，欧拉角转换为轴角表示作为本体感知
-
-- **`datasets/domain_handler/vlabench_rlds.py`**：`VLABenchRLDSHandler`——读取 VLABench RLDS/TFRecord 格式。4 个视角：front、wrist、image_0、image_1。无图像旋转，无欧拉角→轴角转换
-
-- **`datasets/domain_handler/registry.py`**：数据集 handler 注册表，将数据集名称映射到 handler 类。添加新数据集需：①继承 `DomainHandler`（或 `BaseHDF5Handler`）并实现 `iter_episode()`；②在 `registry.py` 的 `_REGISTRY` 字典中注册；③在 `domain_config.py` 的 `DATA_WEIGHTS` 中添加权重。
-
-- **`datasets/domain_config.py`**：`DATA_WEIGHTS` 控制多数据集混合时的采样权重；`DATA_DOMAIN_ID` 为每个数据集分配域 ID（LIBERO=0，VLABench=1），用于训练时区分数据来源
-
-### 训练细节
-
-- **优化器**：AdamW，3 个参数组——`vlm`（前 `freeze_steps=1000` 步冻结，之后 `lr * learning_coef`）、`transformer_core`、`action_heads`
-- **学习率调度**：前 1000 步冻结 VLM，之后线性预热 + 可选余弦衰减
-- **图像尺寸**：默认 384×384，也支持 512×512
-- **视角数**：LIBERO 每样本 2 个有效视角（agentview + wrist），填充至 3；VLABench 4 个视角（front、wrist、image_0、image_1）
-- **Checkpoint**：以 HuggingFace `safetensors` 格式保存在 `{output_dir}/ckpt-{step}/`；用 `--models ./ckpt-N --resume` 恢复训练
-
-### LIBERO 数据格式
-
-HDF5 结构：`data/demo_X/{actions, obs/agentview_rgb, obs/eye_in_hand_rgb, obs/ee_pos, obs/ee_ori, obs/gripper_states}`
-- 动作：7 维增量 `[xyz(3), euler(3), gripper(1)]`，范围 `[-1, 1]`
-- 本体感知：8 维 `[ee_pos(3), axis_angle(3), gripper_states(2)]`
-- 图像：原始 128×128，训练时上采样至 384×384
-
-### VLABench 数据格式
-
-RLDS/TFRecord 结构：每个 shard 文件对应一条轨迹，内部包含多个 episode。
-- 视角：`front`、`wrist`、`image_0`、`image_1`（4 个视角）
+RLDS/TFRecord 格式，每个 shard 文件对应一条轨迹：
+- 4 个视角：front、wrist、image_0、image_1
 - 动作：7 维 `[xyz(3), euler(3), gripper(1)]`，绝对位置
-- 本体感知：7 维 `[xyz(3), euler(3), gripper(1)]`，无欧拉角→轴角转换
-- 图像：无需旋转 180°（与 LIBERO 不同）
+- 本体感知：7 维 `[xyz(3), euler(3), gripper(1)]`
+- 图像无需旋转（与 LIBERO 不同）
 
-### 归一化统计格式
+## Checkpoint 格式
 
-`norm_stats/libero_norm.json` 包含 `state` 和 `actions` 两个键，每个键下有 `mean`、`std`、`q01`、`q99` 数组。由 `LiberoJointActionSpace` 加载，用于 Z-score 或分位数归一化。
+HuggingFace safetensors 格式，保存在 `{output_dir}/ckpt-{step}/`：
+- `config.json`：模型配置（含 use_dual_stream、num_views 等）
+- `model.safetensors`：模型权重
+- `state.json`：训练状态（global_step）
 
-### 推理服务协议
+每次训练自动在输出目录生成 `run_info.txt`，记录算法、超参数、数据路径等信息。
 
-两个评估服务器均通过 `msgpack_numpy` 序列化暴露 **WebSocket** 服务：
-
-- **LIBERO**（`serve_smolvlm_libero.py`）：接收 `{observation/image, observation/wrist_image, observation/state, prompt}`，返回 `{actions: [[7维] × horizon]}`（增量动作）
-- **VLABench**（`serve_smolvlm_vlabench.py`）：接收 `{observation/images: [4个numpy数组], observation/state: [7], prompt}`，返回 `{actions: [[7维] × horizon]}`（绝对位置动作）
