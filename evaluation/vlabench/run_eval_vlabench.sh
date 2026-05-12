@@ -19,6 +19,7 @@ N_EPISODE=${2:-10}
 EVAL_TRACK=${3:-track_debug_simple}
 SAVE_NAME=${4:-simvla_eval}
 CHECKPOINT=${5:-"unknown"}
+SAVE_VIDEO=${6:-true}   # 是否保存视频，默认开启
 
 # Auto-load paths.env if present and vars not already set
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,6 +46,7 @@ Checkpoint 路径：${CHECKPOINT}
 评估 track：${EVAL_TRACK}
 每个任务 episodes：${N_EPISODE}
 服务器端口：${PORT}
+保存视频：${SAVE_VIDEO}
 VLABench 目录：${VLABENCH_DIR}
 结果保存目录：${SAVE_DIR}
 EOF
@@ -56,6 +58,7 @@ echo "Server:     localhost:${PORT}"
 echo "Track:      ${EVAL_TRACK}"
 echo "Episodes:   ${N_EPISODE} per task"
 echo "Checkpoint: ${CHECKPOINT}"
+echo "Save video: ${SAVE_VIDEO}"
 echo "Save dir:   ${SAVE_DIR}"
 echo "============================================================"
 
@@ -70,13 +73,18 @@ fi
 
 cd "${VLABENCH_DIR}"
 
-python scripts/evaluate_policy.py \
-    --eval-track "${EVAL_TRACK}" \
+EVAL_ARGS="--eval-track ${EVAL_TRACK} \
     --policy simvla \
     --host localhost \
-    --port "${PORT}" \
-    --n-episode "${N_EPISODE}" \
-    --save-dir "${SAVE_DIR}" \
-    --metrics success_rate progress_score
+    --port ${PORT} \
+    --n-episode ${N_EPISODE} \
+    --save-dir ${SAVE_DIR} \
+    --metrics success_rate progress_score"
+
+if [ "${SAVE_VIDEO}" = "true" ]; then
+    EVAL_ARGS="${EVAL_ARGS} --visulization"
+fi
+
+python scripts/evaluate_policy.py ${EVAL_ARGS}
 
 echo "Results saved to ${SAVE_DIR}"
