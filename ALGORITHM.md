@@ -12,6 +12,10 @@
 2. [SimVLA Baseline 回顾](#2-simvla-baseline-回顾)
 3. [本工作与 Baseline 的差异总览](#3-本工作与-baseline-的差异总览)
 4. [主要创新点（Major Contributions）](#4-主要创新点)
+   - 4.1 双流多视角融合
+   - 4.2 运动引导跨视角注意力（MotionCNN）★ 新增
+   - 4.3 ActionVAE 隐式扩散策略
+   - 4.4 AdaLN + Concat 混合条件注入
 5. [次要改进点（Minor Contributions）](#5-次要改进点)
 6. [完整数据流](#6-完整数据流)
 7. [训练目标](#7-训练目标)
@@ -63,6 +67,7 @@ SimVLA（arXiv:2602.18224）的核心设计：
 | 维度 | SimVLA Baseline | 本工作 | 重要性 |
 |---|---|---|---|
 | 多视角融合 | 单流 Concat 进 SmolVLM | **双流跨注意力融合** | ★★★ 主要 |
+| 跨视角运动感知 | 无 | **MotionCNN + 运动引导注意力偏置** | ★★★ 主要 |
 | 动作空间 | 直接在 [B,T,D_a] 做 FM | **隐空间 ActionVAE + FM** | ★★★ 主要 |
 | 条件注入方式 | 纯 Concat | **AdaLN + Concat 混合** | ★★★ 主要 |
 | 时间采样 | Beta(1.5, 1) | **Logit-Normal（SD3）** | ★★ 次要 |
@@ -110,7 +115,105 @@ F_dynamic = F_vlm[:, n_s·P:(n_s+1)·P, :]  [B, P, D_v]   （wrist 视角）
 
 ---
 
-### 4.2 ActionVAE 隐式扩散策略（Latent Diffusion Policy）
+### 4.2 运动引导跨视角注意力（Motion-Guided Cross-Attention）
+
+**问题**：4.1 节的 `DualStreamFusion` 中，跨注意力的 Key/Value 来自 wrist 视角的全部 P=576 个 patch，但并非每个 patch 都发生运动——背景 patch 信号近乎静止，让静态视角的 Q 均等地关注所有 K/V 是低效的，甚至可能引入噪声干扰。
+
+**核心问题**：如何让静态视角自动聚焦于 wrist 图像中**正在运动的区域**？
+
+**动机来源**：
+- DeltaCNN（CVPR 2022，arXiv:2203.03996）：用帧差分跳过不变区域的 CNN 计算，目标是节省算力
+- MotionDeltaCNN（ICCV 2023，arXiv:2210.09887）：扩展至移动相机场景（与腕部相机高度相关）
+
+**本工作与上述论文的本质区别**：DeltaCNN 利用帧差分"**省略不变区域的计算**"；本工作利用帧差分"**生成运动语义图来引导注意力**"——目标、用途、架构完全不同，DeltaCNN 仅作为 motivation 参考。
+
+---
+
+**方法：MotionCNN + 注意力偏置注入**
+
+**Step 1：帧差分图**
+
+$$\Delta_t = I_t^{\text{wrist}} - I_{t-1}^{\text{wrist}} \in \mathbb{R}^{B \times 3 \times H \times W}$$
+
+- $I_t^{\text{wrist}}$：当前步腕部图像（已经过 ImageNet 归一化，值域 ~[-2, 2]）
+- $I_{t-1}^{\text{wrist}}$：前一步腕部图像（episode 第一帧时 $I_{-1} = I_0$，差分图全零，注意力退化为均匀）
+- 相机轻微抖动产生全图低幅噪声；运动区域产生局部高幅响应 → 天然区分信号与噪声
+
+**Step 2：MotionCNN（结构化剪枝轻量 CNN）**
+
+```
+输入: Δ_t [B, 3, H, W]
+    ↓ Conv(3→16, 3×3, stride=2, padding=1) + ReLU    输出: [B, 16, H/2, W/2]
+    ↓ Conv(16→32, 3×3, stride=2, padding=1) + ReLU   输出: [B, 32, H/4, W/4]
+    ↓ Conv(32→32, 3×3, stride=2, padding=1) + ReLU   输出: [B, 32, H/8, W/8]
+    ↓ AdaptiveAvgPool2d(g×g)   g = √P = 24（P=576 patches）
+    ↓ Flatten → [B, 32·P]
+    ↓ Linear(32·P, P) + Sigmoid
+输出: M [B, P]  运动激活得分 ∈ [0, 1]（每个 wrist patch 的运动强度）
+```
+
+**结构化剪枝**：通道数为标准 CNN（64/128/256）的 1/4（16/32/32），参数量约 3M，显存增量 < 100MB。
+
+**初始化策略**：
+- Linear 层权重和偏置全零初始化
+- 训练开始时 $M \approx \sigma(0) = 0.5$（均匀激活），与无运动引导等价
+- 训练中模型自适应学习何时、在哪里聚焦运动信号
+
+**Step 3：注意力偏置注入**
+
+在 CrossAttentionFusion 的 softmax 前，将运动激活图叠加至 attention logits：
+
+$$\text{attn\_logits} = \frac{\mathbf{Q}\mathbf{K}^\top}{\sqrt{d_k}}$$
+
+$$\text{attn\_logits} \mathrel{+}= \alpha \cdot \mathbf{M}[:, \text{None}, \text{None}, :]$$
+
+其中：
+- $\mathbf{M}[:, \text{None}, \text{None}, :] \in \mathbb{R}^{B \times 1 \times 1 \times P}$ 广播至所有注意力头和所有 Q 位置
+- $\alpha$ 为**可学习标量**，初始化为 0 → 训练前期完全等价于原始跨注意力，学习稳定后自适应调节运动信号强度
+
+**向后兼容**：`use_motion_guided_attn=False`（默认）时，MotionCNN 不实例化，`CrossAttentionFusion` 收到 `motion_map=None` 跳过偏置注入，行为与旧 checkpoint 完全一致。
+
+---
+
+**数据流新增字段**
+
+| 字段 | 来源 | 形状 | 说明 |
+|---|---|---|---|
+| `wrist_prev_pixels` | `vlabench_rlds._iter_example()` | `[C, H, W]` PIL Image | 前一帧腕部图像，idx=0 时用当前帧重复填充 |
+| `motion_map` | `MotionCNN(Δ_t)` | `[B, P]` | 运动激活得分，在 CrossAttentionFusion 中使用 |
+
+**推理端（serve_smolvlm_vlabench.py）**：
+- 维护 episode 级 `prev_wrist_tensor [1, C, H, W]`，每次推理后更新
+- 接收 `{"reset": true}` 信号时清空（新 episode 开始）
+- episode 第一帧：`prev = current`，差分全零，M 均匀，无负面影响
+
+---
+
+**启用命令**
+
+```bash
+accelerate launch train_smolvlm.py \
+    --use_dual_stream --dual_stream_fusion cross_attn \
+    --use_motion_guided_attn \
+    ...
+```
+
+---
+
+**实现文件**
+
+| 文件 | 改动 |
+|---|---|
+| `models/dual_stream.py` | 新增 `MotionCNN` 类；`CrossAttentionFusion.forward()` 接受 `motion_map` 参数；新增可学习 `motion_bias_scale` |
+| `models/configuration_smolvlm_vla.py` | 新增 `use_motion_guided_attn: bool = False` |
+| `models/modeling_smolvlm_vla.py` | `__init__` 实例化 MotionCNN；`forward()` / `generate_actions()` 计算差分图并传入融合模块 |
+| `datasets/domain_handler/vlabench_rlds.py` | `_iter_example()` 新增 `wrist_prev_pixels` 字段 |
+| `train_smolvlm.py` | 新增 `--use_motion_guided_attn` CLI 参数 |
+| `evaluation/vlabench/serve_smolvlm_vlabench.py` | 维护 episode 级 `prev_wrist_tensor` 缓冲 |
+
+---
+
+### 4.3 ActionVAE 隐式扩散策略（Latent Diffusion Policy）
 
 **问题**：SimVLA 在动作序列空间 [B, T, D_a]（T=30, D_a=7 → 210 维）直接做 Flow Matching，扩散网络需要在高维空间学习复杂的速度场，收敛慢、对分布尾部拟合差。
 
@@ -173,7 +276,7 @@ $$\mathcal{L} = \underbrace{\mathbb{E}\!\left[\|v_z - (\varepsilon_z - z)\|^2\ri
 
 ---
 
-### 4.3 AdaLN + Concat 混合条件注入（Hybrid Conditioning）
+### 4.4 AdaLN + Concat 混合条件注入（Hybrid Conditioning）
 
 **问题**：SimVLA 只有单一 Concat 模式，将 VLM 特征、时间 t、proprio 全部拼入 action token 序列，存在两个缺陷：
 - 序列长度膨胀（L ≫ T），Self-Attention 计算量增大
@@ -482,6 +585,7 @@ for step in 1..S (S=10):
 | 创新点 | 重要性 | 来源论文 | ArXiv | 原论文场景 | 本工作改动 |
 |---|---|---|---|---|---|
 | 双流多视角融合 | ★★★ 主要 | — | 本工作原创 | 无对应 | 对 VLM 输出按视角显式分流，wrist 跨注意力融合 |
+| 运动引导跨视角注意力 | ★★★ 主要 | DeltaCNN / MotionDeltaCNN | 2203.03996 / 2210.09887 | 稀疏卷积省算力 | 帧差分→MotionCNN→运动激活图→注意力偏置；目标完全不同 |
 | ActionVAE 隐式扩散 | ★★★ 主要 | RoLD | 2403.07312 | CNN DP + VQVAE（离散） | 连续 VAE + FM；decoder 跨注意力 VLM |
 | AdaLN+Concat 混合 | ★★★ 主要 | DiT + π0 | 2212.09748 + 2410.24164 | 图像生成 / 纯 AdaLN | 首次混合：AdaLN（t+p）+ Concat（VLM token） |
 | Logit-Normal 采样 | ★★ 次要 | SD3 | 2403.03206 | 图像生成 | 直接迁移至动作 FM |
