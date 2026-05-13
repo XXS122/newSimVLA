@@ -227,35 +227,84 @@ $\mathbf{W}_o$ 和偏置均初始化为零，使得训练开始时 $\mathbf{M} \
 
 \needfig{图2：运动激活图可视化。左列：腕部当前帧与前一帧；中列：帧差分图 $\Delta_t$；右列：MotionCNN 输出的运动激活图（热力图叠加于原图）。选取抓取、移动、放置三个典型阶段各一例。}
 
-\subsection{动作变分自编码器（ActionVAE）}
-\label{sec:method:vae}
+\subsection{隐式扩散动作策略（Latent Diffusion Policy）}
+\label{sec:method:ldp}
 
 \subsubsection{动机}
 
-流匹配直接在原始动作空间 $\mathbb{R}^{T \times D_a}$（$T=10$，$D_a=7$）操作，该空间维度为 70。在长时序任务中，策略需跨越多个阶段（拿起→移动→放置），动作块方差大，直接建模困难。受 RoLD~\cite{rold} 启发，我们将动作块压缩至低维隐变量 $\mathbf{z} \in \mathbb{R}^{d_z}$（$d_z = 32$），在隐空间执行流匹配，再解码恢复动作序列。
+标准流匹配直接在原始动作空间 $\mathbb{R}^{T \times D_a}$（$T=10$，$D_a=7$，共 70 维）上建模速度场。高维动作空间存在两个问题：（1）速度场曲面复杂，网络需要更大容量；（2）在长时序任务中，策略跨越抓取→移动→放置等多阶段，动作块分布方差大、多峰明显，直接回归困难。
 
-\subsubsection{VAE 结构}
+受 RoLD~\cite{rold} 启发，我们提出 \textbf{Latent Diffusion Policy（LDP）}：用变分自编码器（ActionVAE）将动作块压缩至 $d_z = 32$ 维紧凑隐变量 $\mathbf{z}$，在低维隐空间执行流匹配（LatentFlowNet），再由条件解码器还原完整动作序列。压缩比为 $70/32 \approx 2.2$，隐空间流形更规则，速度场更易学习。
 
-\textbf{编码器} $q_\phi(\mathbf{z} | \mathbf{a}) = \mathcal{N}(\bm{\mu}, \text{diag}(\bm{\sigma}^2))$：将动作块 $\mathbf{a} \in \mathbb{R}^{T \times D_a}$ 展平后经两层 MLP 输出均值 $\bm{\mu}$ 和方差 $\bm{\sigma}^2$。
+与 RoLD 的关键区别：（1）RoLD 使用离散 VQVAE，我们采用\textbf{连续 VAE}，梯度直通、与流匹配天然兼容；（2）RoLD 的解码器无语言/视觉条件，我们的解码器\textbf{跨注意力到 VLM 融合特征} $\mathbf{F}_{\text{fused}}$，使动作还原可利用语言语义。
 
-\textbf{解码器} $p_\theta(\mathbf{a} | \mathbf{z})$：将隐变量 $\mathbf{z}$ 经两层 MLP 展开为 $\mathbb{R}^{T \times D_a}$。
+\subsubsection{ActionVAE：编码器}
 
-\paragraph{训练目标}
+编码器 $q_\phi(\mathbf{z} \mid \mathbf{a})$ 采用 Transformer 结构，以 CLS token 汇聚序列信息：
+
+\begin{enumerate}[leftmargin=*, label=\textbf{\arabic*.}]
+  \item 线性投影：$\mathbf{a} \in \mathbb{R}^{T \times D_a} \xrightarrow{\text{Linear}} \mathbf{X} \in \mathbb{R}^{T \times H_{\text{vae}}}$，$H_{\text{vae}}=256$；
+  \item 拼接可学习 CLS token：$[\mathbf{c}_{\text{cls}} \| \mathbf{X}] + \text{PosEmb} \in \mathbb{R}^{(T+1) \times H_{\text{vae}}}$；
+  \item $N_{\text{enc}}=3$ 层自注意力 Transformer 块；
+  \item 取 CLS 输出经线性层输出 $[\bm{\mu}, \log\bm{\sigma}^2] \in \mathbb{R}^{2d_z}$；
+  \item 重参数化采样：
+\end{enumerate}
+\begin{equation}
+  \mathbf{z} = \bm{\mu} + \bm{\varepsilon} \odot \exp\!\left(\tfrac{1}{2}\log\bm{\sigma}^2\right), \quad \bm{\varepsilon} \sim \mathcal{N}(\mathbf{0}, \mathbf{I}_{d_z})
+  \label{eq:reparam}
+\end{equation}
+
+\subsubsection{ActionVAE：条件解码器}
+
+解码器 $p_\theta(\mathbf{a} \mid \mathbf{z}, \mathbf{F}_{\text{fused}})$ 以 VLM 融合特征为条件，通过跨注意力还原动作序列：
+
+\begin{enumerate}[leftmargin=*, label=\textbf{\arabic*.}]
+  \item 线性展开：$\mathbf{z} \xrightarrow{\text{Linear}} \mathbb{R}^{T \times H_{\text{vae}}}$（$T$ 个动作槽）+ 位置编码；
+  \item $N_{\text{dec}}=3$ 层解码块，每层依次为：
+    \begin{itemize}[leftmargin=*]
+      \item 自注意力（动作槽之间）；
+      \item \textbf{跨注意力}（动作槽为 Q，$\mathbf{F}_{\text{fused}}$ 为 K/V，注入语言-视觉语义）；
+      \item 前馈网络（FFN）；
+    \end{itemize}
+  \item 线性投影：$\mathbb{R}^{T \times H_{\text{vae}}} \to \hat{\mathbf{a}} \in \mathbb{R}^{T \times D_a}$（输出层零初始化）。
+\end{enumerate}
+
 ActionVAE 的训练损失为：
 \begin{equation}
-  \mathcal{L}_{\text{VAE}} = \mathcal{L}_{\text{recon}} + \beta \cdot \mathcal{L}_{\text{KL}}
+  \mathcal{L}_{\text{VAE}} = \underbrace{\|\mathbf{a} - \hat{\mathbf{a}}\|_2^2}_{\mathcal{L}_{\text{recon}}} + \beta \underbrace{D_{\text{KL}}\!\left(q_\phi \,\|\, \mathcal{N}(\mathbf{0},\mathbf{I})\right)}_{\mathcal{L}_{\text{KL}}}
   \label{eq:vae}
 \end{equation}
-其中 $\mathcal{L}_{\text{recon}} = \|\mathbf{a} - \hat{\mathbf{a}}\|_2^2$ 为重建损失，$\mathcal{L}_{\text{KL}} = D_{\text{KL}}(q_\phi \| \mathcal{N}(0,\mathbf{I}))$ 为 KL 散度正则，$\beta = 0.001$（$\beta$-VAE 设定）。
+其中 $\beta = 0.001$（$\beta$-VAE 设定），KL 散度正则使隐空间保持连续且近似高斯，便于流匹配采样。
 
-\subsubsection{隐空间流匹配}
+\subsubsection{LatentFlowNet：隐空间速度场}
 
-训练时，将编码得到的隐变量 $\mathbf{z}$ 作为流匹配的目标，Action Transformer 学习在时间步 $t \in [0,1]$ 预测速度场 $v_t$：
+LatentFlowNet 是一个轻量残差 MLP，在 $d_z=32$ 维隐空间预测流匹配速度场：
+
 \begin{equation}
-  \mathcal{L}_{\text{FM}} = \mathbb{E}_{t, \mathbf{z}_0 \sim \mathcal{N}(0,\mathbf{I}), \mathbf{z}_1 \sim q_\phi} \bigl\|v_\theta\bigl(\mathbf{z}_t, t, \mathbf{c}\bigr) - (\mathbf{z}_1 - \mathbf{z}_0)\bigr\|_2^2
+  v_\theta(\mathbf{z}_t,\, t,\, \mathbf{F}_{\text{fused}},\, \mathbf{h}_K) = \text{MLP}\!\left([\mathbf{z}_t \| \bar{\mathbf{F}}_{\text{fused}} \| \mathbf{h}_K \| \mathbf{e}_t]\right)
+  \label{eq:latentfm}
+\end{equation}
+
+其中 $\bar{\mathbf{F}}_{\text{fused}} = \text{MeanPool}(\mathbf{F}_{\text{fused}})$ 为 VLM 全局表示，$\mathbf{h}_K$ 为 GRU 编码的本体感知历史，$\mathbf{e}_t$ 为正弦时间编码。网络由 4 层残差块（隐层 512 维，SiLU 激活）组成，输出层零初始化（训练初期速度场近零，稳定收敛）。
+
+隐空间流匹配损失（条件流匹配，Lipman \etal~\cite{flowmatching}）：
+\begin{equation}
+  \mathcal{L}_{\text{FM}} = \mathbb{E}_{t,\, \mathbf{z}_0 \sim \mathcal{N}(\mathbf{0},\mathbf{I}),\, \mathbf{z}_1 \sim q_\phi} \left\| v_\theta(\mathbf{z}_t, t, \cdot) - (\mathbf{z}_1 - \mathbf{z}_0) \right\|_2^2
   \label{eq:fm}
 \end{equation}
-其中 $\mathbf{z}_t = (1-t)\mathbf{z}_0 + t\mathbf{z}_1$ 为线性插值，$\mathbf{c}$ 为视觉语言条件（融合后的 VLM 特征）。推理时，从 $\mathbf{z}_0 \sim \mathcal{N}(0,\mathbf{I})$ 出发，Euler 积分 $t: 1 \to 0$（10 步），得到 $\hat{\mathbf{z}}_1$，再由解码器恢复动作序列 $\hat{\mathbf{a}}$。
+其中 $\mathbf{z}_t = (1-t)\mathbf{z}_0 + t\mathbf{z}_1$ 为线性插值路径。
+
+\subsubsection{推理流程}
+
+推理时，LDP 以如下方式生成动作：
+\begin{enumerate}[leftmargin=*, label=\textbf{\arabic*.}]
+  \item 从标准高斯采样初始噪声：$\mathbf{z}_1 \sim \mathcal{N}(\mathbf{0}, \mathbf{I}_{d_z})$；
+  \item Euler 积分 $t: 1 \to 0$（10 步），每步 $\mathbf{z}_{t - \Delta t} = \mathbf{z}_t - \Delta t \cdot v_\theta(\mathbf{z}_t, t, \mathbf{F}_{\text{fused}}, \mathbf{h}_K)$；
+  \item 用 ActionVAE 解码器将 $\hat{\mathbf{z}}_0$ 跨注意力到 $\mathbf{F}_{\text{fused}}$，恢复 $\hat{\mathbf{a}} \in \mathbb{R}^{T \times D_a}$；
+  \item 反归一化 + gripper 维度二值化（$> 0.5 \to 1$）。
+\end{enumerate}
+
+与标准流匹配相比，LDP 的 Euler 积分在 32 维而非 70 维空间进行，每步计算量更小，速度场曲率更低，相同步数下积分误差更小。
 
 \subsection{整体训练目标}
 
