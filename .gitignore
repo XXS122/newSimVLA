@@ -6,4 +6,5 @@ paths.env
 norm_stats/vlabench_norm.json
 datasets/metas
 .idea/
-tests/
+tests/*
+!tests/plot_training_log.py

@@ -170,7 +170,8 @@ bash train_vlabench_small.sh 32 0.1 /path/to/ckpt-50000
 conda activate simvla
 cd /datasets/code/newSimVLA
 CUDA_VISIBLE_DEVICES=0 python evaluation/vlabench/serve_smolvlm_vlabench.py \
-    --checkpoint /path/to/ckpt-XXXXX \
+    --checkpoint     /datasets/simvla_output/checkpoint/dualstream/vlabench_dualstream_cross_attn_20260509_07/ckpt-50000
+ \
     --norm_stats ./norm_stats/vlabench_norm.json \
     --port 8200
 ```
@@ -198,11 +199,12 @@ bash run_eval_vlabench.sh <port> <n_episode> <eval_track> <save_name> [checkpoin
 ```bash
 # 调试评估（快速验证）
 bash run_eval_vlabench.sh 8200 10 track_debug_simple debug_eval \
-    /datasets/simvla_output/checkpoint/vlabench_debug_20260505_16/ckpt-10000
+    /datasets/simvla_output/checkpoint/dualstream/vlabench_dualstream_cross_attn_20260509_07/ckpt-50000
 
 # 完整评估
 bash run_eval_vlabench.sh 8200 50 track_1_in_distribution full_eval \
-    /path/to/ckpt-XXXXX
+    /datasets/simvla_output/checkpoint/dualstream/vlabench_dualstream_cross_attn_20260509_07/ckpt-50000
+
 ```
 
 结果保存到 `$SIMVLA_EVAL_RESULTS/<save_name>_<timestamp>/`，包含 `eval_info.txt` 和评估指标。
