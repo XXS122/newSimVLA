@@ -1,8 +1,12 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## 语言要求
 
 **始终使用中文回复用户。**
+
+**不要修改或新增任何与 LIBERO 相关的代码、文档或配置。** 本项目当前只关注 VLABench，LIBERO 相关文件（`evaluation/libero/`、`datasets/domain_handler/libero_hdf5.py`、`train_smolvlm_small.sh`、`train_smolvlm_large.sh` 等）保持原样即可，无需维护。
 
 ## 项目概述
 
